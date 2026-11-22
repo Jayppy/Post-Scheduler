@@ -1,0 +1,6 @@
+{
+  "name": "74 STUDIO SOCIAL HUB",
+  "description": "Multi-brand social production hub and AI Creative Studio for carousels, Reels & Shorts, design themes, media library, and publishing workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
