@@ -88,6 +88,30 @@ export interface SendJobPayload {
   mediaItems?: Array<{ filename: string; mimeType: string; base64Data: string }>;
 }
 
+export class IntegrationsApiError extends Error {
+  status: number;
+  code?: string;
+  results?: Record<string, { ok: boolean; resultUrl?: string; platformPostId?: string; error?: string }>;
+  job?: ScheduledJobSummary;
+
+  constructor(
+    message: string,
+    status: number,
+    extra?: {
+      code?: string;
+      results?: Record<string, { ok: boolean; resultUrl?: string; platformPostId?: string; error?: string }>;
+      job?: ScheduledJobSummary;
+    }
+  ) {
+    super(message);
+    this.name = 'IntegrationsApiError';
+    this.status = status;
+    this.code = extra?.code;
+    this.results = extra?.results;
+    this.job = extra?.job;
+  }
+}
+
 export const integrationsClient = {
   async getStatus(workspaceId: string, verify = false): Promise<IntegrationsStatusResponse> {
     const res = await fetch(
@@ -95,7 +119,7 @@ export const integrationsClient = {
         verify ? '&verify=true' : ''
       }`
     );
-    if (!res.ok) throw new Error('Failed to load connected account status.');
+    if (!res.ok) throw new IntegrationsApiError('Failed to load connected account status.', res.status);
     return res.json();
   },
 
@@ -105,7 +129,11 @@ export const integrationsClient = {
     );
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.url) {
-      throw new Error(data.error || `Unable to start ${platform} connection.`);
+      throw new IntegrationsApiError(
+        data.error || `Unable to start ${platform} connection.`,
+        res.status,
+        { code: data.code }
+      );
     }
     return data.url;
   },
@@ -116,7 +144,7 @@ export const integrationsClient = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workspaceId, platform }),
     });
-    if (!res.ok) throw new Error('Failed to disconnect account.');
+    if (!res.ok) throw new IntegrationsApiError('Failed to disconnect account.', res.status);
   },
 
   async publishNow(payload: {
@@ -136,7 +164,9 @@ export const integrationsClient = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || 'Publishing failed.');
+      throw new IntegrationsApiError(data.error || 'Publishing failed.', res.status, {
+        code: data.code,
+      });
     }
     return data;
   },
@@ -165,6 +195,7 @@ export const integrationsClient = {
     title: string;
     platform: SocialPlatform;
     platforms?: Array<'instagram' | 'youtube'>;
+    destinations?: DestinationPublishState[];
     caption: string;
     hashtags: string[];
     youtubePrivacyStatus?: YouTubePrivacyStatus;
@@ -172,7 +203,13 @@ export const integrationsClient = {
     timezone?: string;
     campaignId?: string;
     mediaAssetIds?: string[];
-    status?: 'draft' | 'scheduled';
+    preservedMediaCount?: number;
+    status?: PublishingLifecycleStatus;
+    attempts?: number;
+    publishedAt?: string;
+    platformPostId?: string;
+    resultUrl?: string;
+    error?: string;
     mediaItems: Array<{ filename: string; mimeType: string; base64Data: string }>;
   }): Promise<ScheduledJobSummary> {
     const res = await fetch('/api/scheduled-jobs', {
@@ -182,7 +219,9 @@ export const integrationsClient = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || 'Failed to save scheduled post.');
+      throw new IntegrationsApiError(data.error || 'Failed to save scheduled post.', res.status, {
+        code: data.code,
+      });
     }
     return data.job;
   },
@@ -210,7 +249,9 @@ export const integrationsClient = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || 'Failed to update scheduled post.');
+      throw new IntegrationsApiError(data.error || 'Failed to update scheduled post.', res.status, {
+        code: data.code,
+      });
     }
     return data.job;
   },
@@ -234,7 +275,11 @@ export const integrationsClient = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok && !data.partial) {
-      throw new Error(data.error || 'Publishing failed.');
+      throw new IntegrationsApiError(data.error || 'Publishing failed.', res.status, {
+        code: data.code,
+        results: data.results,
+        job: data.job,
+      });
     }
     return data;
   },
@@ -254,7 +299,9 @@ export const integrationsClient = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || 'Reconciliation check failed.');
+      throw new IntegrationsApiError(data.error || 'Reconciliation check failed.', res.status, {
+        code: data.code,
+      });
     }
     return data;
   },
@@ -270,7 +317,10 @@ export const integrationsClient = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok && !data.partial) {
-      throw new Error(data.error || 'Retry failed.');
+      throw new IntegrationsApiError(data.error || 'Retry failed.', res.status, {
+        code: data.code,
+        job: data.job,
+      });
     }
     return data;
   },
@@ -281,7 +331,9 @@ export const integrationsClient = {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || 'Failed to cancel scheduled post.');
+      throw new IntegrationsApiError(data.error || 'Failed to cancel scheduled post.', res.status, {
+        code: data.code,
+      });
     }
   },
 
@@ -290,7 +342,7 @@ export const integrationsClient = {
       method: 'DELETE',
     });
     if (!res.ok) {
-      throw new Error('Failed to delete scheduled post.');
+      throw new IntegrationsApiError('Failed to delete scheduled post.', res.status);
     }
   },
 };

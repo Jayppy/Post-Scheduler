@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -31,6 +31,12 @@ import {
   getPlatformLabel,
   getStatusLabel,
 } from '../../utils/publishing';
+import {
+  isNotFoundError,
+  mergeServerAndCloudHistory,
+  mergeServerAndCloudJobs,
+  rehydrateBackendJob,
+} from '../../utils/jobRecovery';
 import { SendConfirmationModal, SendModalInput } from './SendConfirmationModal';
 
 export const ConnectedAccountsView: React.FC = () => {
@@ -177,10 +183,50 @@ export const ConnectedAccountsView: React.FC = () => {
     });
   };
 
-  const handleCancelJob = async (jobId: string) => {
-    setBusyJobId(jobId);
+  const mergedJobs = useMemo(
+    () => mergeServerAndCloudJobs(jobs, cloudJobs),
+    [jobs, cloudJobs]
+  );
+
+  const mergedHistory = useMemo(
+    () => mergeServerAndCloudHistory(history, cloudHistory),
+    [history, cloudHistory]
+  );
+
+  const handleCancelJob = async (job: ScheduledJobSummary) => {
+    setBusyJobId(job.id);
     try {
-      await integrationsClient.cancelScheduledJob(jobId);
+      try {
+        await integrationsClient.cancelScheduledJob(job.id);
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+        await rehydrateBackendJob(
+          {
+            workspaceId: activeWorkspace.id,
+            postId: job.postId,
+            jobId: job.id,
+            title: job.title,
+            platform: job.platform,
+            platforms: job.platforms,
+            destinations: job.destinations,
+            caption: job.caption,
+            hashtags: job.hashtags,
+            youtubePrivacyStatus: job.youtubePrivacyStatus,
+            scheduledIso: job.scheduledIso,
+            timezone: job.timezone,
+            campaignId: job.campaignId,
+            mediaAssetIds: job.mediaAssetIds,
+            mediaCount: job.mediaCount,
+            status: 'cancelled',
+            attempts: job.attempts,
+            publishedAt: job.publishedAt,
+            platformPostId: job.platformPostId,
+            resultUrl: job.resultUrl,
+            error: job.error,
+          },
+          workspaceMedia
+        );
+      }
       notify('info', 'Scheduled job cancelled');
       await loadData(false);
     } catch (err) {
@@ -563,16 +609,16 @@ export const ConnectedAccountsView: React.FC = () => {
               Server-side queue for {activeWorkspace.name} only (never auto-publishes). Supports manual Send Now, partial Retry, and Cancel.
             </p>
           </div>
-          <span className="font-mono text-xs text-zinc-400 tabular-nums">{jobs.length} job(s)</span>
+          <span className="font-mono text-xs text-zinc-400 tabular-nums">{mergedJobs.length} job(s)</span>
         </div>
 
-        {jobs.length === 0 ? (
+        {mergedJobs.length === 0 ? (
           <div className="p-8 text-center text-xs text-zinc-500">
             No scheduled posts for {activeWorkspace.name} yet. Schedule or draft a post in Post Composer.
           </div>
         ) : (
           <div className="divide-y divide-zinc-800/70">
-            {jobs.map((job) => (
+            {mergedJobs.map((job) => (
               <div key={job.id} className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-4">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-zinc-100 truncate">{job.title}</div>
@@ -627,7 +673,7 @@ export const ConnectedAccountsView: React.FC = () => {
                     <button
                       type="button"
                       disabled={busyJobId === job.id}
-                      onClick={() => handleCancelJob(job.id)}
+                      onClick={() => handleCancelJob(job)}
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-zinc-700 text-[11px] text-zinc-300 hover:border-red-500/60"
                     >
                       <XCircle className="w-3 h-3" />
@@ -654,13 +700,13 @@ export const ConnectedAccountsView: React.FC = () => {
       </div>
 
       {/* Recent Publishing History */}
-      {history.length > 0 && (
+      {mergedHistory.length > 0 && (
         <div className="rounded-xl bg-[#111114] border border-zinc-800 overflow-hidden">
           <div className="px-5 py-3.5 border-b border-zinc-800 text-xs font-semibold text-zinc-200">
-            Recent Server Publishing Audit Log ({history.length})
+            Recent Server Publishing Audit Log ({mergedHistory.length})
           </div>
           <div className="divide-y divide-zinc-800/70">
-            {history.slice(0, 10).map((entry) => (
+            {mergedHistory.slice(0, 10).map((entry) => (
               <div key={entry.id} className="px-5 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="min-w-0">
                   <div className="font-medium text-zinc-100 truncate">{entry.title}</div>

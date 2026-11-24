@@ -7,7 +7,21 @@ import { registerSocialIntegrations } from './server/socialIntegrations';
 import { registerInstagramWebhook, WebhookRawBodyRequest } from './server/instagramWebhook';
 import { registerVideoTranscoder } from './server/videoTranscoder';
 
-const PORT = 3000;
+function resolveServerPort(): number {
+  const portArgIdx = process.argv.indexOf('--port');
+  if (portArgIdx !== -1 && process.argv[portArgIdx + 1]) {
+    const cliPort = Number(process.argv[portArgIdx + 1]);
+    if (Number.isFinite(cliPort) && cliPort > 0) return cliPort;
+  }
+  if (process.env.NODE_ENV === 'production' && !process.env.NGINX_PORT) {
+    const prodPort = Number(process.env.PORT);
+    if (Number.isFinite(prodPort) && prodPort > 0) return prodPort;
+  }
+  const devPort = Number(process.env.DEFAULT_APP_PORT);
+  return Number.isFinite(devPort) && devPort > 0 ? devPort : 3000;
+}
+
+const PORT = resolveServerPort();
 
 function getAiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;

@@ -42,6 +42,12 @@ import {
   getStatusLabel,
   zonedDateTimeToUtcIso,
 } from '../../utils/publishing';
+import {
+  isNotFoundError,
+  mergeServerAndCloudHistory,
+  mergeServerAndCloudJobs,
+  rehydrateBackendJob,
+} from '../../utils/jobRecovery';
 import { SendConfirmationModal, SendModalInput } from './SendConfirmationModal';
 
 type QueueFilter = 'all' | PublishingLifecycleStatus;
@@ -167,10 +173,10 @@ export const PublishingQueueView: React.FC = () => {
     refreshBackend();
   }, [refreshBackend]);
 
-  // Authoritative merge: backend jobs -> cloudJobs -> unsynced localPosts
+  // Authoritative merge by postId: backend jobs + Firestore cloudJobs + unsynced localPosts
   const mergedRows = useMemo<MergedQueueRow[]>(() => {
     const byPostId = new Map<string, MergedQueueRow>();
-    const authoritativeJobs = jobs.length > 0 ? jobs : cloudJobs;
+    const authoritativeJobs = mergeServerAndCloudJobs(jobs, cloudJobs);
 
     for (const job of authoritativeJobs) {
       const localPost = workspacePosts.find((p) => p.id === job.postId);
@@ -272,7 +278,10 @@ export const PublishingQueueView: React.FC = () => {
     [mergedRows, filter]
   );
 
-  const effectiveHistory = history.length > 0 ? history : cloudHistory;
+  const effectiveHistory = useMemo(
+    () => mergeServerAndCloudHistory(history, cloudHistory),
+    [history, cloudHistory]
+  );
 
   const openSendModal = (
     row: MergedQueueRow,
@@ -300,11 +309,50 @@ export const PublishingQueueView: React.FC = () => {
     });
   };
 
+  const buildRehydratePayload = (
+    row: MergedQueueRow,
+    overrides: Partial<{
+      scheduledIso: string;
+      timezone: string;
+      status: PublishingLifecycleStatus;
+    }> = {}
+  ) => ({
+    workspaceId: activeWorkspace.id,
+    postId: row.postId,
+    jobId: row.jobId,
+    title: row.title,
+    platform: row.platform,
+    platforms: row.platforms,
+    destinations: row.destinations,
+    caption: row.caption,
+    hashtags: row.hashtags,
+    youtubePrivacyStatus: row.youtubePrivacyStatus,
+    scheduledIso: overrides.scheduledIso || row.scheduledIso,
+    timezone: overrides.timezone || row.timezone,
+    campaignId: row.localPost?.campaignId,
+    mediaAssetIds: row.mediaAssetIds,
+    mediaCount: row.mediaCount,
+    status: overrides.status || row.effectiveStatus,
+    attempts: row.attempts,
+    publishedAt: row.publishedAt,
+    platformPostId: row.platformPostId,
+    resultUrl: row.resultUrl,
+    error: row.error,
+  });
+
   const handleCancelJob = async (row: MergedQueueRow) => {
     setBusyId(row.id);
     try {
       if (row.jobId) {
-        await integrationsClient.cancelScheduledJob(row.jobId);
+        try {
+          await integrationsClient.cancelScheduledJob(row.jobId);
+        } catch (err) {
+          if (!isNotFoundError(err)) throw err;
+          await rehydrateBackendJob(
+            buildRehydratePayload(row, { status: 'cancelled' }),
+            workspaceMedia
+          );
+        }
       }
       if (row.localPost) {
         savePost({ ...row.localPost, status: 'cancelled', backendStatus: 'cancelled' });
@@ -322,7 +370,14 @@ export const PublishingQueueView: React.FC = () => {
     if (!row.jobId) return;
     setBusyId(row.id);
     try {
-      const res = await integrationsClient.reconcileScheduledJob(row.jobId);
+      let res;
+      try {
+        res = await integrationsClient.reconcileScheduledJob(row.jobId);
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+        const restored = await rehydrateBackendJob(buildRehydratePayload(row), workspaceMedia);
+        res = await integrationsClient.reconcileScheduledJob(restored.id);
+      }
       const summary = Object.entries(res.outcomes)
         .map(([k, v]) => `${getPlatformLabel(k as 'instagram' | 'youtube')}: ${v.detail}`)
         .join(' | ');
@@ -349,11 +404,24 @@ export const PublishingQueueView: React.FC = () => {
     setBusyId(row.id);
     try {
       if (row.jobId) {
-        const updated = await integrationsClient.updateScheduledJob(row.jobId, {
-          scheduledIso,
-          timezone: tz,
-          status: 'scheduled',
-        });
+        let updated: ScheduledJobSummary;
+        try {
+          updated = await integrationsClient.updateScheduledJob(row.jobId, {
+            scheduledIso,
+            timezone: tz,
+            status: 'scheduled',
+          });
+        } catch (err) {
+          if (!isNotFoundError(err)) throw err;
+          updated = await rehydrateBackendJob(
+            buildRehydratePayload(row, {
+              scheduledIso,
+              timezone: tz,
+              status: 'scheduled',
+            }),
+            workspaceMedia
+          );
+        }
         if (row.localPost) {
           savePost({
             ...row.localPost,
@@ -362,6 +430,7 @@ export const PublishingQueueView: React.FC = () => {
             timezone: tz,
             scheduledIso,
             status: updated.status as SocialPost['status'],
+            backendJobId: updated.id,
             backendStatus: updated.status,
             publishError: undefined,
           });

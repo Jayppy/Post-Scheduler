@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -17,11 +17,13 @@ import {
 import {
   DestinationPublishState,
   MediaAsset,
+  PublishingLifecycleStatus,
   SocialPlatform,
   Workspace,
   YouTubePrivacyStatus,
 } from '../../types/studio';
 import {
+  IntegrationsApiError,
   integrationsClient,
   IntegrationsStatusResponse,
   MediaPreviewRef,
@@ -30,6 +32,7 @@ import {
 import { getMediaBlob } from '../../services/idb';
 import { prepareMediaItemsForPublish, validateMediaForPlatform } from '../../services/mediaPayload';
 import { formatReadableDateTime, getPlatformLabel, getStatusLabel } from '../../utils/publishing';
+import { isNotFoundError, rehydrateBackendJob } from '../../utils/jobRecovery';
 
 export interface SendModalInput {
   id?: string; // backend jobId if persisted
@@ -104,6 +107,9 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
     { ok: boolean; resultUrl?: string; platformPostId?: string; error?: string }
   > | null>(null);
   const [localDestinations, setLocalDestinations] = useState<DestinationPublishState[]>([]);
+  const [activeJobId, setActiveJobId] = useState<string | undefined>(undefined);
+  const [activePostId, setActivePostId] = useState<string | undefined>(undefined);
+  const initializedSessionRef = useRef<string | null>(null);
 
   const availablePlatforms: Array<'instagram' | 'youtube'> = useMemo(() => {
     if (!item) return [];
@@ -115,7 +121,16 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
   }, [item]);
 
   useEffect(() => {
-    if (!open || !item) return;
+    if (!open || !item) {
+      initializedSessionRef.current = null;
+      return;
+    }
+
+    const sessionKey = `${item.id || ''}:${item.postId || ''}:${item.title}:${availablePlatforms.join(',')}`;
+    if (initializedSessionRef.current === sessionKey) {
+      return;
+    }
+    initializedSessionRef.current = sessionKey;
 
     const dests: DestinationPublishState[] =
       item.destinations && item.destinations.length > 0
@@ -132,6 +147,8 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
             instagramCaption: item.caption,
           }));
     setLocalDestinations(dests);
+    setActiveJobId(item.id && item.id.startsWith('job-') ? item.id : undefined);
+    setActivePostId(item.postId);
 
     const igDest = dests.find((d) => d.platform === 'instagram');
     const ytDest = dests.find((d) => d.platform === 'youtube');
@@ -244,6 +261,10 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
         if ((formatToCheck === 'youtube-shorts' || formatToCheck === 'instagram-reel') && !hasVideo) {
           issues.push(`${getPlatformLabel(target)}: Requires a rendered MP4 video asset.`);
         }
+      } else if (item.mediaCount && item.mediaCount > 0) {
+        issues.push(
+          `${getPlatformLabel(target)}: Attached media is not on this server or browser cache. Re-attach media in Post Composer before sending.`
+        );
       } else {
         issues.push(`${getPlatformLabel(target)}: No media files attached to this post.`);
       }
@@ -275,11 +296,40 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
       .filter((t) => t.length > 1);
 
   const handleReconcile = async (platform: 'instagram' | 'youtube') => {
-    if (!item.id || reconciling) return;
+    const targetJobId = activeJobId || item.id;
+    if (!targetJobId || reconciling) return;
     setReconciling(true);
     setSendError(null);
     try {
-      const res = await integrationsClient.reconcileScheduledJob(item.id, platform);
+      let res;
+      try {
+        res = await integrationsClient.reconcileScheduledJob(targetJobId, platform);
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+        const restored = await rehydrateBackendJob(
+          {
+            workspaceId: workspace.id,
+            postId: activePostId || item.postId || targetJobId.replace(/^job-/, ''),
+            jobId: targetJobId,
+            title: item.title,
+            platform: item.platform,
+            platforms: availablePlatforms,
+            destinations: localDestinations,
+            caption: item.caption,
+            hashtags: item.hashtags,
+            youtubePrivacyStatus: item.youtubePrivacyStatus,
+            scheduledIso: item.scheduledIso || new Date().toISOString(),
+            timezone: item.timezone,
+            mediaAssetIds: item.mediaAssetIds,
+            mediaCount: item.mediaCount,
+            status: (item.status as PublishingLifecycleStatus) || 'failed',
+          },
+          mediaAssets
+        );
+        setActiveJobId(restored.id);
+        setActivePostId(restored.postId);
+        res = await integrationsClient.reconcileScheduledJob(restored.id, platform);
+      }
       if (res.job.destinations) {
         setLocalDestinations(res.job.destinations);
       }
@@ -298,7 +348,10 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
   };
 
   const handleConfirmSend = async () => {
-    if (submitting || selectedTargets.length === 0) return;
+    const eligibleTargets = selectedTargets.filter(
+      (t) => localDestinations.find((d) => d.platform === t)?.status !== 'published'
+    );
+    if (submitting || eligibleTargets.length === 0) return;
     if (validationIssues.length > 0) {
       setSendError(validationIssues[0]);
       return;
@@ -306,15 +359,14 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
 
     setSubmitting(true);
     setSendError(null);
-    setSendResults(null);
 
     try {
       let hydratedMediaItems:
         | Array<{ filename: string; mimeType: string; base64Data: string }>
         | undefined;
-      if ((!item.mediaPreviews || item.mediaPreviews.length === 0) && attachedAssets.length > 0) {
+      if (attachedAssets.length > 0) {
         setStageLabel('Encoding attached media assets...');
-        const primaryFormat: SocialPlatform = selectedTargets.includes('youtube')
+        const primaryFormat: SocialPlatform = eligibleTargets.includes('youtube')
           ? 'youtube-shorts'
           : igFormat;
         hydratedMediaItems = await prepareMediaItemsForPublish(
@@ -324,90 +376,132 @@ export const SendConfirmationModal: React.FC<SendConfirmationModalProps> = ({
         );
       }
 
-      if (item.id && item.id.startsWith('job-')) {
-        setStageLabel(
-          `Publishing to ${selectedTargets.map((t) => getPlatformLabel(t)).join(' & ')}...`
-        );
-        const res = await integrationsClient.sendScheduledJob(item.id, {
-          targets: selectedTargets,
-          instagramCaption: selectedTargets.includes('instagram') ? igCaption : undefined,
-          instagramFormat: selectedTargets.includes('instagram') ? igFormat : undefined,
-          youtubeTitle: selectedTargets.includes('youtube') ? ytTitle : undefined,
-          youtubeDescription: selectedTargets.includes('youtube') ? ytDescription : undefined,
-          youtubeTags: selectedTargets.includes('youtube') ? parsedYtTags() : undefined,
-          youtubePrivacyStatus: selectedTargets.includes('youtube') ? ytPrivacy : undefined,
-          mediaItems: hydratedMediaItems,
+      const resolvedPostId =
+        activePostId ||
+        item.postId ||
+        `post-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setActivePostId(resolvedPostId);
+
+      const primaryFormatForJob: SocialPlatform = availablePlatforms.includes('instagram')
+        ? igFormat
+        : 'youtube-shorts';
+
+      let targetJobId =
+        activeJobId || (item.id && item.id.startsWith('job-') ? item.id : undefined);
+
+      if (!targetJobId) {
+        setStageLabel('Registering idempotent publish record...');
+        const synced = await integrationsClient.syncScheduledJob({
+          workspaceId: workspace.id,
+          postId: resolvedPostId,
+          title: (eligibleTargets.includes('youtube') ? ytTitle : item.title) || item.title,
+          platform: primaryFormatForJob,
+          platforms: availablePlatforms,
+          destinations: localDestinations,
+          caption: eligibleTargets.includes('instagram') ? igCaption : ytDescription || item.caption,
+          hashtags: parsedYtTags().length > 0 ? parsedYtTags() : item.hashtags,
+          youtubePrivacyStatus: ytPrivacy,
+          scheduledIso: item.scheduledIso || new Date().toISOString(),
+          timezone: item.timezone || 'Africa/Lagos',
+          mediaAssetIds: item.mediaAssetIds,
+          preservedMediaCount:
+            hydratedMediaItems?.length || item.mediaCount || attachedAssets.length,
+          status: 'scheduled',
+          mediaItems: hydratedMediaItems || [],
         });
-        setSendResults(res.results || null);
-        if (res.job?.destinations) {
-          setLocalDestinations(res.job.destinations);
+        targetJobId = synced.id;
+        setActiveJobId(synced.id);
+      }
+
+      const sendPayload = {
+        targets: eligibleTargets,
+        instagramCaption: eligibleTargets.includes('instagram') ? igCaption : undefined,
+        instagramFormat: eligibleTargets.includes('instagram') ? igFormat : undefined,
+        youtubeTitle: eligibleTargets.includes('youtube') ? ytTitle : undefined,
+        youtubeDescription: eligibleTargets.includes('youtube') ? ytDescription : undefined,
+        youtubeTags: eligibleTargets.includes('youtube') ? parsedYtTags() : undefined,
+        youtubePrivacyStatus: eligibleTargets.includes('youtube') ? ytPrivacy : undefined,
+        mediaItems: hydratedMediaItems,
+      };
+
+      setStageLabel(
+        `Publishing to ${eligibleTargets.map((t) => getPlatformLabel(t)).join(' & ')}...`
+      );
+
+      let res;
+      try {
+        res = await integrationsClient.sendScheduledJob(targetJobId, sendPayload);
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+        setStageLabel('Restoring missing backend post record...');
+        const restored = await rehydrateBackendJob(
+          {
+            workspaceId: workspace.id,
+            postId: resolvedPostId,
+            jobId: targetJobId,
+            title: item.title,
+            platform: primaryFormatForJob,
+            platforms: availablePlatforms,
+            destinations: localDestinations,
+            caption: item.caption,
+            hashtags: item.hashtags,
+            youtubePrivacyStatus: ytPrivacy,
+            scheduledIso: item.scheduledIso || new Date().toISOString(),
+            timezone: item.timezone || 'Africa/Lagos',
+            mediaAssetIds: item.mediaAssetIds,
+            mediaCount: item.mediaCount || attachedAssets.length,
+            status: (item.status as PublishingLifecycleStatus) || 'scheduled',
+            preEncodedMediaItems: hydratedMediaItems,
+          },
+          mediaAssets
+        );
+        targetJobId = restored.id;
+        setActiveJobId(restored.id);
+        setStageLabel(
+          `Publishing to ${eligibleTargets.map((t) => getPlatformLabel(t)).join(' & ')}...`
+        );
+        res = await integrationsClient.sendScheduledJob(restored.id, sendPayload);
+      }
+
+      setSendResults((prev) => ({ ...(prev || {}), ...(res.results || {}) }));
+      if (res.job?.destinations) {
+        setLocalDestinations(res.job.destinations);
+        setSelectedTargets(
+          res.job.destinations
+            .filter((d) => d.status !== 'published' && d.status !== 'cancelled')
+            .map((d) => d.platform)
+        );
+      }
+      onCompleted?.({
+        job: res.job,
+        results: res.results,
+        partialError: res.partial ? res.job.error : undefined,
+      });
+      if (res.partial) {
+        setSendError(
+          res.job.error ||
+            'One destination succeeded and one failed. Only the failed destination remains selectable for retry.'
+        );
+      }
+    } catch (err) {
+      if (err instanceof IntegrationsApiError) {
+        if (err.results) {
+          setSendResults((prev) => ({ ...(prev || {}), ...err.results }));
+        }
+        if (err.job?.destinations) {
+          setLocalDestinations(err.job.destinations);
           setSelectedTargets(
-            res.job.destinations
+            err.job.destinations
               .filter((d) => d.status !== 'published' && d.status !== 'cancelled')
               .map((d) => d.platform)
           );
+          onCompleted?.({
+            job: err.job,
+            results: err.results,
+            partialError: err.message,
+          });
         }
-        onCompleted?.({
-          job: res.job,
-          results: res.results,
-          partialError: res.partial ? res.job.error : undefined,
-        });
-        if (res.partial) {
-          setSendError(
-            res.job.error ||
-              'One destination succeeded and one failed. Only the failed destination remains selectable for retry.'
-          );
-        }
-      } else {
-        // Immediate direct send from Post Composer (unsaved post)
-        const resultsMap: Record<
-          string,
-          { ok: boolean; resultUrl?: string; platformPostId?: string; error?: string }
-        > = {};
-        let firstSuccessUrl: string | undefined;
-        let firstErr: string | undefined;
-
-        for (const target of selectedTargets) {
-          const fmt: SocialPlatform = target === 'youtube' ? 'youtube-shorts' : igFormat;
-          setStageLabel(`Preparing media & sending to ${getPlatformLabel(target)}...`);
-          const mediaItems = await prepareMediaItemsForPublish(
-            item.mediaAssetIds || [],
-            mediaAssets,
-            fmt
-          );
-          try {
-            const res = await integrationsClient.publishNow({
-              workspaceId: workspace.id,
-              postId: item.postId,
-              platform: fmt,
-              title: (target === 'youtube' ? ytTitle : item.title) || item.title,
-              caption: target === 'youtube' ? ytDescription : igCaption,
-              hashtags: target === 'youtube' ? parsedYtTags() : item.hashtags,
-              youtubePrivacyStatus: target === 'youtube' ? ytPrivacy : undefined,
-              mediaItems,
-            });
-            resultsMap[target] = {
-              ok: true,
-              resultUrl: res.resultUrl,
-              platformPostId: res.platformPostId,
-            };
-            if (!firstSuccessUrl && res.resultUrl) firstSuccessUrl = res.resultUrl;
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Publishing failed.';
-            resultsMap[target] = { ok: false, error: msg };
-            if (!firstErr) firstErr = `${getPlatformLabel(target)}: ${msg}`;
-          }
-        }
-
-        setSendResults(resultsMap);
-        onCompleted?.({
-          results: resultsMap,
-          directResultUrl: firstSuccessUrl,
-          partialError: firstErr,
-        });
-        if (firstErr) setSendError(firstErr);
       }
-    } catch (err) {
       const msg = err instanceof Error ? err.message : 'Publishing failed.';
       setSendError(msg);
     } finally {

@@ -94,6 +94,7 @@ export interface ScheduledPublishJob {
   timezone: string;
   campaignId?: string;
   mediaAssetIds?: string[];
+  preservedMediaCount?: number;
   publicBaseUrl?: string;
   mediaItems: Array<{
     filename: string;
@@ -125,11 +126,18 @@ export interface PublishHistoryEntry {
   timestamp: string;
 }
 
+interface DirectPublishedRecord {
+  platformPostId?: string;
+  resultUrl?: string;
+  publishedAt: string;
+}
+
 interface VaultSnapshot {
   connections: Record<string, StoredConnectionRecord>;
   scheduledJobs: Record<string, ScheduledPublishJob>;
   publishHistory: PublishHistoryEntry[];
   pendingStates: Record<string, OAuthStateEntry>;
+  publishedDirectKeys?: Record<string, DirectPublishedRecord>;
 }
 
 const META_GRAPH_VERSION = 'v21.0';
@@ -141,6 +149,7 @@ const connections = new Map<string, WorkspaceConnection>(); // key: `${workspace
 const tempMediaStore = new Map<string, TempMediaEntry>();
 const scheduledJobs = new Map<string, ScheduledPublishJob>();
 const publishHistory: PublishHistoryEntry[] = [];
+const publishedDirectKeys = new Map<string, DirectPublishedRecord>(); // key: `${workspaceId}:${postId}:${platform}`
 const activePublishingKeys = new Set<string>(); // Prevents concurrent duplicate publishing per `${jobId}:${platform}`
 
 function isDueNow(scheduledIso: string, nowMs: number = Date.now()): boolean {
@@ -250,7 +259,7 @@ function serializeJobSummary(job: ScheduledPublishJob) {
     ...rest,
     status,
     destinations,
-    mediaCount: mediaItems.length,
+    mediaCount: mediaItems.length > 0 ? mediaItems.length : (job.preservedMediaCount ?? 0),
     mediaPreviews: mediaItems.map((m, index) => ({
       index,
       filename: m.filename,
@@ -359,6 +368,12 @@ function loadVaultFromDisk() {
         }
       }
     }
+
+    if (parsed.publishedDirectKeys) {
+      for (const [k, v] of Object.entries(parsed.publishedDirectKeys)) {
+        publishedDirectKeys.set(k, v);
+      }
+    }
   } catch (err) {
     console.warn('Failed to load integrations vault from disk:', err);
   }
@@ -394,11 +409,17 @@ function saveVaultToDisk() {
       statesObj[k] = v;
     }
 
+    const directObj: Record<string, DirectPublishedRecord> = {};
+    for (const [k, v] of publishedDirectKeys.entries()) {
+      directObj[k] = v;
+    }
+
     const snapshot: VaultSnapshot = {
       connections: connObj,
       scheduledJobs: jobsObj,
       publishHistory: publishHistory.slice(0, 200),
       pendingStates: statesObj,
+      publishedDirectKeys: directObj,
     };
 
     const tmpPath = `${VAULT_FILE}.tmp`;
@@ -693,7 +714,7 @@ function registerTempMedia(buffer: Buffer, mimeType: string, baseUrl?: string): 
 async function waitForInstagramContainer(
   creationId: string,
   accessToken: string,
-  maxAttempts = 20
+  maxAttempts = 40
 ): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
     const statusRes = await fetch(
@@ -1673,13 +1694,39 @@ export function registerSocialIntegrations(app: Express) {
       return res.status(400).json({ error: 'workspaceId and platform are required.' });
     }
 
+    const destPlatform: ConnectedPlatform = platform === 'youtube-shorts' ? 'youtube' : 'instagram';
+    const directKey = postId ? `${workspaceId}:${postId}:${destPlatform}` : null;
+    if (directKey) {
+      const priorDirect = publishedDirectKeys.get(directKey);
+      if (priorDirect) {
+        return res.status(409).json({
+          error: `${destPlatform} was already published for this post (${priorDirect.resultUrl || priorDirect.platformPostId || 'done'}). Duplication prevented.`,
+        });
+      }
+      const existingJob = scheduledJobs.get(`job-${postId}`);
+      const existingDest = existingJob?.destinations.find((d) => d.platform === destPlatform);
+      if (existingDest?.status === 'published') {
+        return res.status(409).json({
+          error: `${destPlatform} is already published (${existingDest.resultUrl || existingDest.platformPostId || 'done'}). Duplication prevented.`,
+        });
+      }
+      if (
+        activePublishingKeys.has(`job-${postId}:${destPlatform}`) ||
+        activePublishingKeys.has(`${postId}:${destPlatform}`)
+      ) {
+        return res.status(409).json({
+          error: `${destPlatform} publish is already in progress. Duplicate request blocked.`,
+        });
+      }
+    }
+
     const tempJob: ScheduledPublishJob = {
-      id: `pub-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      id: postId ? `job-${postId}` : `pub-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       workspaceId,
       postId: postId || 'immediate',
       title: title || 'Untitled Post',
       platform,
-      platforms: [platform === 'youtube-shorts' ? 'youtube' : 'instagram'],
+      platforms: [destPlatform],
       destinations: buildDefaultDestinations({
         platform,
         title: title || 'Untitled Post',
@@ -1705,6 +1752,14 @@ export function registerSocialIntegrations(app: Express) {
     const outcome = await sendSingleDestination(tempJob, targetDest, 'immediate', getAppBaseUrl(req));
     if (!outcome.ok) {
       return res.status(400).json({ error: outcome.error || 'Publishing failed.' });
+    }
+    if (directKey) {
+      publishedDirectKeys.set(directKey, {
+        platformPostId: outcome.platformPostId,
+        resultUrl: outcome.resultUrl,
+        publishedAt: targetDest.publishedAt || new Date().toISOString(),
+      });
+      saveVaultToDisk();
     }
     return res.json({
       ok: true,
@@ -1745,7 +1800,7 @@ export function registerSocialIntegrations(app: Express) {
     return res.json({ history });
   });
 
-  // Create or Update a Scheduled / Draft post in the authoritative Schedule & Send queue
+  // Create or Update a Scheduled / Draft / Rehydrated post in the authoritative Schedule & Send queue
   app.post('/api/scheduled-jobs', (req: Request, res: Response) => {
     const body = req.body as {
       workspaceId: string;
@@ -1753,6 +1808,7 @@ export function registerSocialIntegrations(app: Express) {
       title: string;
       platform: SocialFormat;
       platforms?: ConnectedPlatform[];
+      destinations?: DestinationPublishState[];
       caption: string;
       hashtags: string[];
       youtubePrivacyStatus?: YouTubePrivacyStatus;
@@ -1760,8 +1816,14 @@ export function registerSocialIntegrations(app: Express) {
       timezone?: string;
       campaignId?: string;
       mediaAssetIds?: string[];
-      status?: 'draft' | 'scheduled';
-      mediaItems: Array<{ filename: string; mimeType: string; base64Data: string }>;
+      preservedMediaCount?: number;
+      status?: JobLifecycleStatus;
+      attempts?: number;
+      publishedAt?: string;
+      platformPostId?: string;
+      resultUrl?: string;
+      error?: string;
+      mediaItems?: Array<{ filename: string; mimeType: string; base64Data: string }>;
     };
 
     if (!body.workspaceId || !body.postId || !body.scheduledIso || !body.platform) {
@@ -1776,7 +1838,7 @@ export function registerSocialIntegrations(app: Express) {
       });
     }
 
-    const destinations = buildDefaultDestinations({
+    const defaultDests = buildDefaultDestinations({
       platform: body.platform,
       platforms: body.platforms,
       title: body.title || 'Scheduled Post',
@@ -1784,18 +1846,70 @@ export function registerSocialIntegrations(app: Express) {
       hashtags: body.hashtags || [],
       youtubePrivacyStatus: body.youtubePrivacyStatus,
       scheduledIso: body.scheduledIso,
+      statusHint: body.status,
+    });
+
+    const sourceDests =
+      existing?.destinations && existing.destinations.length > 0
+        ? existing.destinations
+        : body.destinations && body.destinations.length > 0
+          ? body.destinations
+          : [];
+
+    const destinations: DestinationPublishState[] = defaultDests.map((defDest) => {
+      const prior = sourceDests.find((d) => d.platform === defDest.platform);
+      if (!prior) return defDest;
+      if (prior.status === 'published') {
+        return {
+          ...defDest,
+          ...prior,
+          status: 'published',
+        };
+      }
+      return {
+        ...defDest,
+        attempts: prior.attempts ?? defDest.attempts,
+        status:
+          body.status === 'cancelled'
+            ? 'cancelled'
+            : prior.status === 'publishing'
+              ? 'failed'
+              : prior.status || defDest.status,
+        error: prior.error,
+        inFlightId: prior.inFlightId,
+        needsReconciliation: prior.needsReconciliation,
+      };
     });
 
     const now = new Date().toISOString();
+    const resolvedMediaItems =
+      body.mediaItems && body.mediaItems.length > 0
+        ? body.mediaItems
+        : existing?.mediaItems || [];
+    const preservedMediaCount =
+      resolvedMediaItems.length > 0
+        ? resolvedMediaItems.length
+        : Math.max(Number(body.preservedMediaCount || 0), existing?.preservedMediaCount || 0);
+
+    const initialStatus: JobLifecycleStatus =
+      body.status === 'draft'
+        ? 'draft'
+        : body.status === 'cancelled'
+          ? 'cancelled'
+          : isDueNow(body.scheduledIso)
+            ? 'ready-to-send'
+            : 'scheduled';
+
     const job: ScheduledPublishJob = {
       id,
       workspaceId: body.workspaceId,
       postId: body.postId,
       title: body.title || 'Scheduled Post',
       platform: body.platform,
-      platforms: body.platforms && body.platforms.length > 0
-        ? Array.from(new Set(body.platforms))
-        : [body.platform === 'youtube-shorts' ? 'youtube' : 'instagram'],
+      platforms:
+        body.platforms && body.platforms.length > 0
+          ? Array.from(new Set(body.platforms))
+          : [body.platform === 'youtube-shorts' ? 'youtube' : 'instagram'],
       destinations,
       caption: body.caption || '',
       hashtags: body.hashtags || [],
@@ -1804,10 +1918,15 @@ export function registerSocialIntegrations(app: Express) {
       timezone: body.timezone || 'Africa/Lagos',
       campaignId: body.campaignId,
       mediaAssetIds: body.mediaAssetIds || existing?.mediaAssetIds || [],
+      preservedMediaCount,
       publicBaseUrl: getAppBaseUrl(req),
-      mediaItems: body.mediaItems && body.mediaItems.length > 0 ? body.mediaItems : existing?.mediaItems || [],
-      status: body.status === 'draft' ? 'draft' : isDueNow(body.scheduledIso) ? 'ready-to-send' : 'scheduled',
-      attempts: existing?.attempts || 0,
+      mediaItems: resolvedMediaItems,
+      status: initialStatus,
+      attempts: Math.max(Number(body.attempts || 0), existing?.attempts || 0),
+      publishedAt: body.publishedAt || existing?.publishedAt,
+      platformPostId: body.platformPostId || existing?.platformPostId,
+      resultUrl: body.resultUrl || existing?.resultUrl,
+      error: body.error || existing?.error,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };

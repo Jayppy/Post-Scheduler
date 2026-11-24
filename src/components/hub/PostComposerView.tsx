@@ -21,7 +21,13 @@ import { getMediaBlob } from '../../services/idb';
 import { integrationsClient, IntegrationsStatusResponse } from '../../services/integrationsClient';
 import { prepareMediaItemsForPublish, validateMediaForPlatform } from '../../services/mediaPayload';
 import { createId } from '../../services/storage';
-import { MediaAsset, SocialPlatform, SocialPost, YouTubePrivacyStatus } from '../../types/studio';
+import {
+  DestinationPublishState,
+  MediaAsset,
+  SocialPlatform,
+  SocialPost,
+  YouTubePrivacyStatus,
+} from '../../types/studio';
 import {
   DEFAULT_PUBLISHING_TIMEZONE,
   SUPPORTED_TIMEZONES,
@@ -31,6 +37,7 @@ import {
   getUserLocalTimezone,
   zonedDateTimeToUtcIso,
 } from '../../utils/publishing';
+import { isNotFoundError } from '../../utils/jobRecovery';
 import { SendConfirmationModal, SendModalInput } from './SendConfirmationModal';
 
 type DestinationSelection = SocialPlatform | 'both-video';
@@ -56,6 +63,9 @@ export const PostComposerView: React.FC = () => {
 
   const [editingPostId, setEditingPostId] = useState<string | undefined>(composerDraft?.editingPostId);
   const [editingJobId, setEditingJobId] = useState<string | undefined>(composerDraft?.editingJobId);
+  const [partialDestinations, setPartialDestinations] = useState<
+    DestinationPublishState[] | undefined
+  >(undefined);
   const [title, setTitle] = useState(composerDraft?.title || '');
   const [destination, setDestination] = useState<DestinationSelection>(
     composerDraft?.platform || 'instagram-carousel'
@@ -90,6 +100,7 @@ export const PostComposerView: React.FC = () => {
     if (!composerDraft) return;
     setEditingPostId(composerDraft.editingPostId);
     setEditingJobId(composerDraft.editingJobId);
+    setPartialDestinations(undefined);
     setTitle(composerDraft.title);
     setDestination(composerDraft.platform);
     setCaption(composerDraft.caption);
@@ -246,40 +257,49 @@ export const PostComposerView: React.FC = () => {
           ? await prepareMediaItemsForPublish(attachedIds, workspaceMedia, primaryPlatform)
           : [];
 
-      const job = editingJobId
-        ? await integrationsClient.updateScheduledJob(editingJobId, {
-            title: title.trim() || `${activeWorkspace.name} Post`,
-            platform: primaryPlatform,
-            platforms: targetDestPlatforms,
-            caption,
-            hashtags,
-            youtubePrivacyStatus: targetDestPlatforms.includes('youtube')
-              ? youtubePrivacyStatus
-              : undefined,
-            scheduledIso,
-            timezone,
+      const syncPayload = {
+        workspaceId: activeWorkspace.id,
+        postId,
+        title: title.trim() || `${activeWorkspace.name} Post`,
+        platform: primaryPlatform,
+        platforms: targetDestPlatforms,
+        destinations: partialDestinations,
+        caption,
+        hashtags,
+        youtubePrivacyStatus: targetDestPlatforms.includes('youtube')
+          ? youtubePrivacyStatus
+          : undefined,
+        scheduledIso,
+        timezone,
+        campaignId: campaignId || undefined,
+        mediaAssetIds: attachedIds,
+        status: targetMode,
+        mediaItems,
+      };
+
+      let job;
+      if (editingJobId) {
+        try {
+          job = await integrationsClient.updateScheduledJob(editingJobId, {
+            title: syncPayload.title,
+            platform: syncPayload.platform,
+            platforms: syncPayload.platforms,
+            caption: syncPayload.caption,
+            hashtags: syncPayload.hashtags,
+            youtubePrivacyStatus: syncPayload.youtubePrivacyStatus,
+            scheduledIso: syncPayload.scheduledIso,
+            timezone: syncPayload.timezone,
             status: targetMode,
-            mediaAssetIds: attachedIds,
-            mediaItems,
-          })
-        : await integrationsClient.syncScheduledJob({
-            workspaceId: activeWorkspace.id,
-            postId,
-            title: title.trim() || `${activeWorkspace.name} Post`,
-            platform: primaryPlatform,
-            platforms: targetDestPlatforms,
-            caption,
-            hashtags,
-            youtubePrivacyStatus: targetDestPlatforms.includes('youtube')
-              ? youtubePrivacyStatus
-              : undefined,
-            scheduledIso,
-            timezone,
-            campaignId: campaignId || undefined,
-            mediaAssetIds: attachedIds,
-            status: targetMode,
-            mediaItems,
+            mediaAssetIds: syncPayload.mediaAssetIds,
+            mediaItems: syncPayload.mediaItems,
           });
+        } catch (err) {
+          if (!isNotFoundError(err)) throw err;
+          job = await integrationsClient.syncScheduledJob(syncPayload);
+        }
+      } else {
+        job = await integrationsClient.syncScheduledJob(syncPayload);
+      }
 
       const resolvedStatus: SocialPost['status'] =
         job.status === 'ready-to-send'
@@ -361,6 +381,7 @@ export const PostComposerView: React.FC = () => {
       title: title.trim() || `${activeWorkspace.name} Release`,
       platform: primaryPlatform,
       platforms: targetDestPlatforms,
+      destinations: partialDestinations,
       caption,
       hashtags: parsedHashtags(),
       youtubePrivacyStatus: targetDestPlatforms.includes('youtube') ? youtubePrivacyStatus : undefined,
@@ -377,6 +398,7 @@ export const PostComposerView: React.FC = () => {
       activeWorkspace.name,
       primaryPlatform,
       targetDestPlatforms,
+      partialDestinations,
       caption,
       hashtagsText,
       youtubePrivacyStatus,
@@ -691,6 +713,7 @@ export const PostComposerView: React.FC = () => {
                 onClick={() => {
                   setEditingPostId(undefined);
                   setEditingJobId(undefined);
+                  setPartialDestinations(undefined);
                   setComposerDraft(null);
                 }}
                 className="px-3.5 py-2 rounded-md border border-zinc-800 text-xs text-zinc-400 hover:text-zinc-200"
@@ -804,6 +827,9 @@ export const PostComposerView: React.FC = () => {
           if (urls.length > 0) setLastPublishedUrls(urls);
 
           if (res.job) {
+            setEditingPostId(res.job.postId);
+            setEditingJobId(res.job.id);
+            setPartialDestinations(res.partialError ? res.job.destinations : undefined);
             savePost({
               id: res.job.postId,
               workspaceId: res.job.workspaceId,
@@ -857,6 +883,9 @@ export const PostComposerView: React.FC = () => {
           await syncCloudSnapshot();
           if (!res.partialError) {
             setComposerDraft(null);
+            setEditingPostId(undefined);
+            setEditingJobId(undefined);
+            setPartialDestinations(undefined);
             notify('success', 'Published to live account', urls[0] || activeWorkspace.name);
           } else {
             notify('warning', 'Partial or Failed Send', res.partialError);

@@ -37,6 +37,11 @@ import {
   getStatusLabel,
   zonedDateTimeToUtcIso,
 } from '../../utils/publishing';
+import {
+  isNotFoundError,
+  mergeServerAndCloudJobs,
+  rehydrateBackendJob,
+} from '../../utils/jobRecovery';
 import { SendConfirmationModal, SendModalInput } from './SendConfirmationModal';
 
 interface CalendarEntry {
@@ -122,7 +127,10 @@ export const ContentCalendarView: React.FC = () => {
     refreshBackendJobs();
   }, [refreshBackendJobs]);
 
-  const effectiveBackendJobs = backendJobs.length > 0 ? backendJobs : cloudJobs;
+  const effectiveBackendJobs = useMemo(
+    () => mergeServerAndCloudJobs(backendJobs, cloudJobs),
+    [backendJobs, cloudJobs]
+  );
 
   const jobByPostId = useMemo(() => {
     const map = new Map<string, ScheduledJobSummary>();
@@ -258,11 +266,38 @@ export const ContentCalendarView: React.FC = () => {
     if (entry.jobId) {
       setBusyId(entry.id);
       try {
-        await integrationsClient.updateScheduledJob(entry.jobId, {
-          scheduledIso,
-          timezone: tz,
-          status: 'scheduled',
-        });
+        try {
+          await integrationsClient.updateScheduledJob(entry.jobId, {
+            scheduledIso,
+            timezone: tz,
+            status: 'scheduled',
+          });
+        } catch (err) {
+          if (!isNotFoundError(err)) throw err;
+          await rehydrateBackendJob(
+            {
+              workspaceId: activeWorkspace.id,
+              postId: entry.postId,
+              jobId: entry.jobId,
+              title: entry.title,
+              platform: entry.platform,
+              platforms: entry.platforms,
+              destinations: entry.destinations,
+              caption: entry.caption,
+              hashtags: entry.hashtags,
+              youtubePrivacyStatus: entry.youtubePrivacyStatus,
+              scheduledIso,
+              timezone: tz,
+              campaignId: entry.localPost?.campaignId,
+              mediaAssetIds: entry.mediaAssetIds,
+              mediaCount: entry.mediaCount,
+              status: 'scheduled',
+              resultUrl: entry.resultUrl,
+              error: entry.error,
+            },
+            workspaceMedia
+          );
+        }
         notify('success', 'Schedule updated', `${newDate} ${timeVal} (${tz})`);
         await refreshBackendJobs();
       } catch (err) {
@@ -329,7 +364,34 @@ export const ContentCalendarView: React.FC = () => {
     setBusyId(entry.id);
     try {
       if (entry.jobId) {
-        await integrationsClient.cancelScheduledJob(entry.jobId);
+        try {
+          await integrationsClient.cancelScheduledJob(entry.jobId);
+        } catch (err) {
+          if (!isNotFoundError(err)) throw err;
+          await rehydrateBackendJob(
+            {
+              workspaceId: activeWorkspace.id,
+              postId: entry.postId,
+              jobId: entry.jobId,
+              title: entry.title,
+              platform: entry.platform,
+              platforms: entry.platforms,
+              destinations: entry.destinations,
+              caption: entry.caption,
+              hashtags: entry.hashtags,
+              youtubePrivacyStatus: entry.youtubePrivacyStatus,
+              scheduledIso: entry.scheduledIso,
+              timezone: entry.timezone,
+              campaignId: entry.localPost?.campaignId,
+              mediaAssetIds: entry.mediaAssetIds,
+              mediaCount: entry.mediaCount,
+              status: 'cancelled',
+              resultUrl: entry.resultUrl,
+              error: entry.error,
+            },
+            workspaceMedia
+          );
+        }
       }
       if (entry.localPost) {
         savePost({ ...entry.localPost, status: 'cancelled', backendStatus: 'cancelled' });

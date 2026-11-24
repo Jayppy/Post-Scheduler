@@ -39,6 +39,7 @@ import {
   getStatusLabel,
   getUserLocalTimezone,
 } from '../../utils/publishing';
+import { mergeServerAndCloudJobs } from '../../utils/jobRecovery';
 import { SendConfirmationModal, SendModalInput } from './SendConfirmationModal';
 
 interface DashboardQueueItem {
@@ -141,11 +142,11 @@ export const HubOverview: React.FC = () => {
     refreshDashboard();
   }, [refreshDashboard]);
 
-  // Merge authoritative backend jobs + cloud jobs + any unsynced local posts
+  // Merge authoritative backend jobs + cloud jobs (by postId) + any unsynced local posts
   const unifiedItems = useMemo<DashboardQueueItem[]>(() => {
     const byPostId = new Map<string, DashboardQueueItem>();
 
-    const allServerAndCloud = jobs.length > 0 ? jobs : cloudJobs;
+    const allServerAndCloud = mergeServerAndCloudJobs(jobs, cloudJobs);
     for (const job of allServerAndCloud) {
       const tz = job.timezone || DEFAULT_PUBLISHING_TIMEZONE;
       const localPost = workspacePosts.find((p) => p.id === job.postId);
