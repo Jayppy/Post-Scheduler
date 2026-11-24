@@ -109,13 +109,123 @@ export interface RenderReelContext {
 
 export interface RenderReelOutput {
   blob: Blob;
-  mimeType: string;
-  extension: 'mp4' | 'webm';
-  engineUsed: 'ffmpeg-wasm' | 'canvas-mediarecorder';
+  mimeType: 'video/mp4';
+  extension: 'mp4';
+  engineUsed: 'ffmpeg-server' | 'ffmpeg-wasm';
   duration: number;
   width: number;
   height: number;
   fps: number;
+  verification: {
+    videoCodec: string;
+    audioCodec: string;
+    faststart: boolean;
+  };
+}
+
+function readAscii(bytes: Uint8Array, start: number, len: number): string {
+  let out = '';
+  for (let i = 0; i < len && start + i < bytes.length; i++) {
+    out += String.fromCharCode(bytes[start + i]);
+  }
+  return out;
+}
+
+function readUint32BE(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] << 24) |
+      (bytes[offset + 1] << 16) |
+      (bytes[offset + 2] << 8) |
+      bytes[offset + 3]) >>>
+    0
+  );
+}
+
+function containsFourCC(bytes: Uint8Array, fourcc: string): boolean {
+  const c0 = fourcc.charCodeAt(0);
+  const c1 = fourcc.charCodeAt(1);
+  const c2 = fourcc.charCodeAt(2);
+  const c3 = fourcc.charCodeAt(3);
+  for (let i = 0; i + 4 <= bytes.length; i++) {
+    if (bytes[i] === c0 && bytes[i + 1] === c1 && bytes[i + 2] === c2 && bytes[i + 3] === c3) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function validateSocialMp4Bytes(bytes: Uint8Array): {
+  valid: boolean;
+  faststart: boolean;
+  reason?: string;
+} {
+  if (bytes.length < 64) {
+    return { valid: false, faststart: false, reason: 'Exported MP4 file is empty or truncated.' };
+  }
+
+  let offset = 0;
+  let hasFtyp = false;
+  let moovStart = -1;
+  let moovEnd = -1;
+  let mdatStart = -1;
+
+  while (offset + 8 <= bytes.length) {
+    let boxSize = readUint32BE(bytes, offset);
+    const boxType = readAscii(bytes, offset + 4, 4);
+
+    if (boxSize === 1 && offset + 16 <= bytes.length) {
+      const hi = readUint32BE(bytes, offset + 8);
+      const lo = readUint32BE(bytes, offset + 12);
+      boxSize = hi * 4294967296 + lo;
+    } else if (boxSize === 0) {
+      boxSize = bytes.length - offset;
+    }
+
+    if (boxSize < 8 || offset + boxSize > bytes.length) {
+      break;
+    }
+
+    if (boxType === 'ftyp') hasFtyp = true;
+    if (boxType === 'moov' && moovStart === -1) {
+      moovStart = offset;
+      moovEnd = offset + boxSize;
+    }
+    if (boxType === 'mdat' && mdatStart === -1) {
+      mdatStart = offset;
+    }
+
+    offset += boxSize;
+  }
+
+  if (!hasFtyp || moovStart === -1 || mdatStart === -1) {
+    return {
+      valid: false,
+      faststart: false,
+      reason: `Invalid MP4 structure (ftyp=${hasFtyp}, moov=${moovStart !== -1}, mdat=${mdatStart !== -1}).`,
+    };
+  }
+
+  const faststart = moovStart < mdatStart;
+  if (!faststart) {
+    return {
+      valid: false,
+      faststart: false,
+      reason: 'MP4 moov atom is placed after mdat (missing +faststart required by Instagram/YouTube).',
+    };
+  }
+
+  const moovSlice = bytes.subarray(moovStart, moovEnd);
+  const hasAvc1 = containsFourCC(moovSlice, 'avc1');
+  const hasMp4a = containsFourCC(moovSlice, 'mp4a');
+  if (!hasAvc1 || !hasMp4a) {
+    return {
+      valid: false,
+      faststart,
+      reason: `Incompatible codecs in MP4 (H.264 avc1=${hasAvc1}, AAC mp4a=${hasMp4a}).`,
+    };
+  }
+
+  return { valid: true, faststart: true };
 }
 
 let cachedFfmpeg: FFmpeg | null = null;
@@ -136,7 +246,7 @@ async function getLoadedFfmpeg(onLog?: (msg: string) => void): Promise<FFmpeg | 
     cachedFfmpeg = ffmpeg;
     return ffmpeg;
   } catch (err) {
-    console.warn('FFmpeg.wasm unavailable or failed to initialize, using browser Canvas MediaRecorder:', err);
+    console.warn('Browser FFmpeg.wasm fallback unavailable:', err);
     return null;
   }
 }
@@ -478,6 +588,7 @@ export async function renderReelVideo({
 
     const stream = canvas.captureStream(fps);
     const dest = audioCtx.createMediaStreamDestination();
+    dest.channelCount = 2;
 
     const attachAudioBuffer = (buffer: AudioBuffer, gainLevel: number) => {
       const source = audioCtx.createBufferSource();
@@ -511,16 +622,26 @@ export async function renderReelVideo({
       attachAudioBuffer(voiceBuffer, reel.voiceVolume);
     }
 
-    if (audioBuffer || voiceBuffer) {
-      dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+    // Social platforms (Instagram Reels & YouTube Shorts) reject or fail ingestion on video-only files without an AAC audio stream.
+    // Inject a valid 44.1kHz stereo silent track if no music/voiceover was attached.
+    if (!audioBuffer && !voiceBuffer) {
+      const silentLen = Math.max(1, Math.ceil(audioCtx.sampleRate * Math.min(60, totalDuration)));
+      const silentBuf = audioCtx.createBuffer(2, silentLen, audioCtx.sampleRate);
+      const silentSrc = audioCtx.createBufferSource();
+      silentSrc.buffer = silentBuf;
+      silentSrc.connect(dest);
+      silentSrc.start(audioCtx.currentTime, 0, totalDuration);
     }
 
+    dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+
+    // Prefer high-bitrate WebM VP8/VP9 during intermediate canvas capture so FFmpeg produces clean non-fragmented H.264/AAC MP4
     const preferredMimes = [
-      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-      'video/mp4',
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
       'video/webm',
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4',
     ];
     const selectedMime =
       preferredMimes.find((m) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) || '';
@@ -531,7 +652,7 @@ export async function renderReelVideo({
 
     const recorder = new MediaRecorder(stream, {
       mimeType: selectedMime,
-      videoBitsPerSecond: 6_000_000,
+      videoBitsPerSecond: 8_000_000,
     });
     const chunks: BlobPart[] = [];
     recorder.ondataavailable = (e) => {
@@ -581,7 +702,7 @@ export async function renderReelVideo({
         }
 
         drawReelFrame(ctx, width, height, elapsed, totalDuration, reel, workspace, mediaMap);
-        const pct = 20 + Math.round((elapsed / totalDuration) * 55);
+        const pct = 20 + Math.round((elapsed / totalDuration) * 52);
         onProgress?.(`Rendering frames (${elapsed.toFixed(1)}s / ${totalDuration.toFixed(1)}s)...`, pct);
         requestAnimationFrame(tick);
       };
@@ -598,76 +719,131 @@ export async function renderReelVideo({
       }
     });
 
-    if (selectedMime.startsWith('video/mp4')) {
-      onProgress?.('Finalizing MP4 container...', 100);
-      return {
-        blob: rawBlob,
-        mimeType: 'video/mp4',
-        extension: 'mp4',
-        engineUsed: 'canvas-mediarecorder',
-        duration: totalDuration,
-        width,
-        height,
-        fps,
-      };
-    }
+    // ALWAYS transcode through FFmpeg to guarantee social-compatible H.264 High@L4.0 yuv420p + AAC 44.1kHz stereo + 30 FPS CFR + +faststart
+    let finalMp4Bytes: Uint8Array | null = null;
+    let engineUsed: RenderReelOutput['engineUsed'] = 'ffmpeg-server';
+    let serverFaststart = false;
+    let videoCodec = 'h264';
+    let audioCodec = 'aac';
 
-    // Attempt FFmpeg.wasm transcoding to H.264/AAC MP4
-    onProgress?.('Transcoding to MP4 (H.264/AAC) with FFmpeg.wasm...', 80);
-    const ffmpeg = await getLoadedFfmpeg();
-    if (ffmpeg) {
+    onProgress?.('Encoding social-ready H.264/AAC MP4 (+faststart)...', 76);
+
+    try {
+      const transcodeUrl = `/api/video/transcode-mp4?width=${encodeURIComponent(
+        String(width)
+      )}&height=${encodeURIComponent(String(height))}&fps=${encodeURIComponent(
+        String(fps)
+      )}&duration=${encodeURIComponent(totalDuration.toFixed(3))}`;
+
+      const res = await fetch(transcodeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': rawBlob.type || 'application/octet-stream' },
+        body: rawBlob,
+        signal: abortSignal,
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(errJson.error || `Server transcoder error (${res.status})`);
+      }
+
+      const buf = await res.arrayBuffer();
+      finalMp4Bytes = new Uint8Array(buf);
+      engineUsed = 'ffmpeg-server';
+      serverFaststart = res.headers.get('X-Faststart-Verified') === 'true';
+      videoCodec = res.headers.get('X-Video-Codec') || 'h264';
+      audioCodec = res.headers.get('X-Audio-Codec') || 'aac';
+    } catch (serverErr) {
+      if (abortSignal?.aborted) throw serverErr;
+      onProgress?.('Server transcoder unavailable, encoding H.264/AAC via FFmpeg.wasm...', 82);
+      const ffmpeg = await getLoadedFfmpeg();
+      if (!ffmpeg) {
+        throw new Error(
+          `Social-ready MP4 encoding failed (${
+            serverErr instanceof Error ? serverErr.message : 'server unavailable'
+          }) and browser FFmpeg.wasm fallback could not load. Export halted so an incompatible file is not saved.`
+        );
+      }
+
       try {
-        await ffmpeg.writeFile('input.webm', await fetchFile(rawBlob));
+        await ffmpeg.writeFile('input.bin', await fetchFile(rawBlob));
         await ffmpeg.exec([
           '-i',
-          'input.webm',
+          'input.bin',
+          '-t',
+          totalDuration.toFixed(3),
+          '-vf',
+          `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p`,
           '-c:v',
           'libx264',
-          '-preset',
-          'ultrafast',
+          '-profile:v',
+          'high',
+          '-level',
+          '4.0',
           '-pix_fmt',
           'yuv420p',
           '-r',
           String(fps),
+          '-vsync',
+          'cfr',
+          '-preset',
+          'ultrafast',
           '-c:a',
           'aac',
           '-b:a',
           '128k',
+          '-ar',
+          '44100',
+          '-ac',
+          '2',
           '-movflags',
           '+faststart',
           'output.mp4',
         ]);
         const mp4Data = await ffmpeg.readFile('output.mp4');
-        const mp4Bytes = mp4Data instanceof Uint8Array ? new Uint8Array(mp4Data) : new TextEncoder().encode(String(mp4Data));
-        const mp4Blob = new Blob([mp4Bytes.buffer], { type: 'video/mp4' });
-        await ffmpeg.deleteFile('input.webm').catch(() => {});
+        finalMp4Bytes =
+          mp4Data instanceof Uint8Array
+            ? new Uint8Array(mp4Data)
+            : new TextEncoder().encode(String(mp4Data));
+        engineUsed = 'ffmpeg-wasm';
+        await ffmpeg.deleteFile('input.bin').catch(() => {});
         await ffmpeg.deleteFile('output.mp4').catch(() => {});
-        onProgress?.('MP4 export ready.', 100);
-        return {
-          blob: mp4Blob,
-          mimeType: 'video/mp4',
-          extension: 'mp4',
-          engineUsed: 'ffmpeg-wasm',
-          duration: totalDuration,
-          width,
-          height,
-          fps,
-        };
-      } catch (ffmpegErr) {
-        console.warn('FFmpeg.wasm transcode failed, returning WebM fallback:', ffmpegErr);
+      } catch (wasmErr) {
+        throw new Error(
+          `MP4 encoding failed cleanly (${
+            wasmErr instanceof Error ? wasmErr.message : String(wasmErr)
+          }). No invalid WebM or broken MP4 file was created.`
+        );
       }
     }
 
-    onProgress?.('Export complete (WebM fallback container).', 100);
+    onProgress?.('Verifying MP4 container atoms (ftyp/moov/avc1/mp4a)...', 94);
+    const atomCheck = validateSocialMp4Bytes(finalMp4Bytes);
+    if (!atomCheck.valid) {
+      throw new Error(
+        `Export blocked: MP4 failed Instagram/YouTube compatibility validation (${atomCheck.reason}).`
+      );
+    }
+
+    const mp4ArrayBuffer = new ArrayBuffer(finalMp4Bytes.byteLength);
+    new Uint8Array(mp4ArrayBuffer).set(finalMp4Bytes);
+    const mp4Blob = new Blob([mp4ArrayBuffer], { type: 'video/mp4' });
+    onProgress?.('Verified social-ready MP4 export complete.', 100);
+
     return {
-      blob: rawBlob,
-      mimeType: rawBlob.type || 'video/webm',
-      extension: 'webm',
-      engineUsed: 'canvas-mediarecorder',
+      blob: mp4Blob,
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+      engineUsed,
       duration: totalDuration,
       width,
       height,
       fps,
+      verification: {
+        videoCodec,
+        audioCodec,
+        faststart: serverFaststart || atomCheck.faststart,
+      },
     };
   } finally {
     objectUrls.forEach((u) => URL.revokeObjectURL(u));

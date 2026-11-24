@@ -8,6 +8,7 @@ import {
   Image as ImageIcon,
   Layers,
   LayoutDashboard,
+  Link2,
   ListChecks,
   Megaphone,
   Menu,
@@ -35,6 +36,7 @@ const HUB_NAV: Array<{ id: MainNavSection; label: string; icon: React.ComponentT
   { id: 'content-calendar', label: 'Content Calendar', icon: Calendar },
   { id: 'publishing-queue', label: 'Publishing Queue', icon: ListChecks },
   { id: 'campaign-manager', label: 'Campaign Manager', icon: Megaphone },
+  { id: 'connected-accounts', label: 'Connected Accounts', icon: Link2 },
 ];
 
 const STUDIO_SUB_NAV: Array<{

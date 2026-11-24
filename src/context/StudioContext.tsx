@@ -11,9 +11,15 @@ import {
   SocialPlatform,
   SocialPost,
   Workspace,
+  YouTubePrivacyStatus,
 } from '../types/studio';
 import { createId, studioStorage } from '../services/storage';
 import { deleteMediaBlob, putMediaBlob } from '../services/idb';
+import { integrationsClient } from '../services/integrationsClient';
+import { prepareMediaItemsForPublish } from '../services/mediaPayload';
+import { useFirebase } from './FirebaseContext';
+import { deleteScheduledJobFromFirestore } from '../services/firebaseClient';
+import { DEFAULT_PUBLISHING_TIMEZONE, zonedDateTimeToUtcIso } from '../utils/publishing';
 
 export interface ToastMessage {
   id: string;
@@ -23,11 +29,17 @@ export interface ToastMessage {
 }
 
 export interface ComposerDraftInput {
+  editingPostId?: string;
+  editingJobId?: string;
   title: string;
-  platform: SocialPlatform;
+  platform: SocialPlatform | 'both-video';
   caption: string;
   hashtags: string[];
   mediaAssetIds: string[];
+  scheduledDate?: string;
+  scheduledTime?: string;
+  timezone?: string;
+  youtubePrivacyStatus?: YouTubePrivacyStatus;
   sourceProjectId?: string;
 }
 
@@ -39,6 +51,7 @@ export interface CalendarScheduleInput {
   mediaAssetIds: string[];
   scheduledDate: string;
   scheduledTime: string;
+  timezone?: string;
   sourceProjectId?: string;
 }
 
@@ -111,6 +124,7 @@ interface StudioContextValue {
 const StudioContext = createContext<StudioContextValue | null>(null);
 
 export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, syncFromServerSnapshot } = useFirebase();
   const [workspaces, setWorkspaces] = useState<Workspace[]>(() => studioStorage.loadWorkspaces());
   const [activeWorkspaceId, setActiveWsId] = useState<string>(() => studioStorage.loadActiveWorkspaceId());
   const [navSection, setNavSection] = useState<MainNavSection>('creative-studio');
@@ -401,9 +415,18 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, []);
 
-  const deletePost = useCallback((id: string) => {
-    setPosts((prev) => prev.filter((p) => p.id !== id));
-  }, []);
+  const deletePost = useCallback(
+    (id: string) => {
+      const target = posts.find((p) => p.id === id);
+      const jobIdToDelete = target?.backendJobId || `job-${id}`;
+      integrationsClient.deleteScheduledJob(jobIdToDelete).catch(() => {});
+      if (user) {
+        deleteScheduledJobFromFirestore(user, jobIdToDelete).catch(() => {});
+      }
+      setPosts((prev) => prev.filter((p) => p.id !== id));
+    },
+    [posts, user]
+  );
 
   const workspaceCampaigns = useMemo(
     () => campaigns.filter((c) => c.workspaceId === activeWorkspace.id),
@@ -429,26 +452,95 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const schedulePostToCalendar = useCallback(
     (input: CalendarScheduleInput) => {
       const now = new Date().toISOString();
+      const postId = createId('post');
+      const tz = input.timezone || DEFAULT_PUBLISHING_TIMEZONE;
+      const timeVal = input.scheduledTime || '18:00';
+      const scheduledIso = zonedDateTimeToUtcIso(input.scheduledDate, timeVal, tz);
+      const platforms: Array<'instagram' | 'youtube'> = [
+        input.platform === 'youtube-shorts' ? 'youtube' : 'instagram',
+      ];
+
       const post: SocialPost = {
-        id: createId('post'),
+        id: postId,
         workspaceId: activeWorkspace.id,
         title: input.title,
         platform: input.platform,
+        platforms,
         caption: input.caption,
         hashtags: input.hashtags,
         mediaAssetIds: input.mediaAssetIds,
         status: 'scheduled',
         scheduledDate: input.scheduledDate,
-        scheduledTime: input.scheduledTime,
+        scheduledTime: timeVal,
+        timezone: tz,
+        scheduledIso,
         sourceProjectId: input.sourceProjectId,
         createdAt: now,
         updatedAt: now,
       };
       setPosts((prev) => [post, ...prev]);
       setNavSection('content-calendar');
-      notify('success', 'Added to Content Calendar', `${input.title} scheduled for ${input.scheduledDate}.`);
+
+      // Persist in authoritative backend Schedule & Send queue (never auto-publishes)
+      (async () => {
+        try {
+          const wsMedia = mediaLibrary.filter((m) => m.workspaceId === activeWorkspace.id);
+          const mediaItems =
+            input.mediaAssetIds.length > 0
+              ? await prepareMediaItemsForPublish(input.mediaAssetIds, wsMedia, input.platform).catch(
+                  () => []
+                )
+              : [];
+
+          const job = await integrationsClient.syncScheduledJob({
+            workspaceId: activeWorkspace.id,
+            postId,
+            title: input.title,
+            platform: input.platform,
+            platforms,
+            caption: input.caption,
+            hashtags: input.hashtags,
+            scheduledIso,
+            timezone: tz,
+            mediaAssetIds: input.mediaAssetIds,
+            status: 'scheduled',
+            mediaItems,
+          });
+          setPosts((prev) =>
+            prev.map((p) =>
+              p.id === postId
+                ? {
+                    ...p,
+                    status: job.status === 'ready-to-send' ? 'ready-to-send' : 'scheduled',
+                    backendJobId: job.id,
+                    backendStatus: job.status,
+                  }
+                : p
+            )
+          );
+          if (user && user.emailVerified) {
+            const [s, j, h] = await Promise.all([
+              integrationsClient.getStatus(activeWorkspace.id, false),
+              integrationsClient.listScheduledJobs(activeWorkspace.id),
+              integrationsClient.listPublishHistory(activeWorkspace.id),
+            ]);
+            await syncFromServerSnapshot(activeWorkspace.id, s, j, h).catch(() => {});
+          }
+          notify(
+            'success',
+            'Scheduled for Manual Send',
+            `${input.title} queued for ${input.scheduledDate} ${timeVal} (${tz}). Click Send Now when due.`
+          );
+        } catch (err) {
+          notify(
+            'warning',
+            'Saved to Calendar (Backend sync pending)',
+            err instanceof Error ? err.message : ''
+          );
+        }
+      })();
     },
-    [activeWorkspace.id, notify]
+    [activeWorkspace.id, mediaLibrary, notify, syncFromServerSnapshot, user]
   );
 
   return (

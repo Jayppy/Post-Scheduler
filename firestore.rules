@@ -1,0 +1,265 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Helpers
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function userExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    // 3. Entity Validation Blueprints (Synchronized 1:1 with firebase-blueprint.json)
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'role', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.uid == request.auth.uid
+        && data.displayName is string && data.displayName.size() <= 120
+        && (!('email' in data) || (data.email is string && data.email.size() <= 200))
+        && data.role == 'operator'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkspaceConnection(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'platform', 'connected', 'accountId', 'accountName', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'platform', 'connected', 'accountId', 'accountName',
+          'accountHandle', 'tokenType', 'expiresAt', 'lastError', 'connectedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId is string && data.workspaceId.size() >= 1 && data.workspaceId.size() <= 80 && data.workspaceId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.platform in ['instagram', 'youtube']
+        && data.connected is bool
+        && data.accountId is string && data.accountId.size() <= 128
+        && data.accountName is string && data.accountName.size() <= 160
+        && (!('accountHandle' in data) || (data.accountHandle is string && data.accountHandle.size() <= 120))
+        && (!('tokenType' in data) || (data.tokenType in ['SYSTEM_USER', 'USER', 'GOOGLE_OAUTH']))
+        && (!('expiresAt' in data) || (data.expiresAt is number && data.expiresAt >= 0))
+        && (!('lastError' in data) || (data.lastError is string && data.lastError.size() <= 600))
+        && (!('connectedAt' in data) || (data.connectedAt is string && data.connectedAt.size() <= 64))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidHashtagsList(tags) {
+      return tags is list
+        && tags.size() <= 30
+        && (tags.size() == 0 || (tags[0] is string && tags[0].size() <= 80));
+    }
+
+    function isValidDestState(val) {
+      return val in ['scheduled', 'ready-to-send', 'publishing', 'published', 'failed', 'cancelled'];
+    }
+
+    function isValidScheduledJob(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'postId', 'title', 'platform', 'caption',
+          'hashtags', 'scheduledIso', 'mediaCount', 'status', 'attempts', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'postId', 'title', 'platform', 'caption',
+          'hashtags', 'scheduledIso', 'timezone', 'youtubePrivacyStatus',
+          'mediaCount', 'status', 'attempts', 'publishedAt', 'platformPostId',
+          'resultUrl', 'error',
+          'igStatus', 'igPostId', 'igResultUrl', 'igPublishedAt', 'igError',
+          'ytStatus', 'ytPostId', 'ytResultUrl', 'ytPublishedAt', 'ytError',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId is string && data.workspaceId.size() >= 1 && data.workspaceId.size() <= 80 && data.workspaceId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.postId is string && data.postId.size() >= 1 && data.postId.size() <= 128 && data.postId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.platform in ['youtube-shorts', 'instagram-reel', 'instagram-carousel', 'instagram-feed']
+        && data.caption is string && data.caption.size() <= 2500
+        && isValidHashtagsList(data.hashtags)
+        && data.scheduledIso is string && data.scheduledIso.size() >= 10 && data.scheduledIso.size() <= 64
+        && (!('timezone' in data) || (data.timezone is string && data.timezone.size() <= 64))
+        && (!('youtubePrivacyStatus' in data) || (data.youtubePrivacyStatus in ['public', 'unlisted', 'private']))
+        && data.mediaCount is number && data.mediaCount >= 0 && data.mediaCount <= 20
+        && data.status in ['draft', 'pending', 'scheduled', 'ready-to-send', 'publishing', 'published', 'partially-published', 'failed', 'cancelled']
+        && data.attempts is number && data.attempts >= 0 && data.attempts <= 500
+        && (!('publishedAt' in data) || (data.publishedAt is string && data.publishedAt.size() <= 64))
+        && (!('platformPostId' in data) || (data.platformPostId is string && data.platformPostId.size() <= 160))
+        && (!('resultUrl' in data) || (data.resultUrl is string && data.resultUrl.size() <= 500))
+        && (!('error' in data) || (data.error is string && data.error.size() <= 1000))
+        && (!('igStatus' in data) || isValidDestState(data.igStatus))
+        && (!('igPostId' in data) || (data.igPostId is string && data.igPostId.size() <= 160))
+        && (!('igResultUrl' in data) || (data.igResultUrl is string && data.igResultUrl.size() <= 500))
+        && (!('igPublishedAt' in data) || (data.igPublishedAt is string && data.igPublishedAt.size() <= 64))
+        && (!('igError' in data) || (data.igError is string && data.igError.size() <= 1000))
+        && (!('ytStatus' in data) || isValidDestState(data.ytStatus))
+        && (!('ytPostId' in data) || (data.ytPostId is string && data.ytPostId.size() <= 160))
+        && (!('ytResultUrl' in data) || (data.ytResultUrl is string && data.ytResultUrl.size() <= 500))
+        && (!('ytPublishedAt' in data) || (data.ytPublishedAt is string && data.ytPublishedAt.size() <= 64))
+        && (!('ytError' in data) || (data.ytError is string && data.ytError.size() <= 1000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPublishHistoryRecord(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'postId', 'title', 'platform', 'mode', 'status', 'timestamp', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'postId', 'jobId', 'title', 'platform',
+          'mode', 'status', 'platformPostId', 'resultUrl', 'error', 'timestamp', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId is string && data.workspaceId.size() >= 1 && data.workspaceId.size() <= 80 && data.workspaceId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.postId is string && data.postId.size() >= 1 && data.postId.size() <= 128 && data.postId.matches('^[a-zA-Z0-9_\\-]+$')
+        && (!('jobId' in data) || (data.jobId is string && data.jobId.size() <= 128))
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.platform in ['youtube-shorts', 'instagram-reel', 'instagram-carousel', 'instagram-feed']
+        && data.mode in ['manual-send', 'immediate', 'scheduled', 'retry']
+        && data.status in ['published', 'failed']
+        && (!('platformPostId' in data) || (data.platformPostId is string && data.platformPostId.size() <= 160))
+        && (!('resultUrl' in data) || (data.resultUrl is string && data.resultUrl.size() <= 500))
+        && (!('error' in data) || (data.error is string && data.error.size() <= 1000))
+        && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 64
+        && data.createdAt is timestamp;
+    }
+
+    // 4. Collection Rules
+    match /users/{userId} {
+      // PII protected: strictly single-owner get only (no blanket read or list)
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().role == existing().role
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt']);
+
+      allow delete: if false;
+
+      match /workspaceConnections/{connectionId} {
+        allow get: if isValidId(userId) && isValidId(connectionId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(connectionId)
+          && isOwner(userId)
+          && isValidWorkspaceConnection(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(connectionId)
+          && isOwner(userId)
+          && isValidWorkspaceConnection(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().platform == existing().platform
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'connected', 'accountId', 'accountName', 'accountHandle',
+            'tokenType', 'expiresAt', 'lastError', 'connectedAt', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(connectionId) && isOwner(userId);
+      }
+
+      match /scheduledJobs/{jobId} {
+        allow get: if isValidId(userId) && isValidId(jobId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(jobId)
+          && isOwner(userId)
+          && isValidScheduledJob(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(jobId)
+          && isOwner(userId)
+          && isValidScheduledJob(incoming())
+          && existing().status != 'published'
+          && incoming().ownerId == existing().ownerId
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().postId == existing().postId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action: Reschedule or edit metadata
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'platform', 'caption', 'hashtags', 'scheduledIso', 'timezone',
+              'youtubePrivacyStatus', 'mediaCount', 'status', 'error',
+              'igStatus', 'igError', 'ytStatus', 'ytError', 'updatedAt'
+            ]) ||
+            // Action: Sync manual send / dual-platform execution state
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'attempts', 'publishedAt', 'platformPostId', 'resultUrl', 'error',
+              'igStatus', 'igPostId', 'igResultUrl', 'igPublishedAt', 'igError',
+              'ytStatus', 'ytPostId', 'ytResultUrl', 'ytPublishedAt', 'ytError',
+              'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId) && isValidId(jobId) && isOwner(userId);
+      }
+
+      match /publishHistory/{historyId} {
+        allow get: if isValidId(userId) && isValidId(historyId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(historyId)
+          && isOwner(userId)
+          && isValidPublishHistoryRecord(incoming())
+          && incoming().createdAt == request.time
+          && userExists(userId);
+
+        // Append-only audit log
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(historyId) && isOwner(userId);
+      }
+    }
+  }
+}

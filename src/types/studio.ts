@@ -6,7 +6,8 @@ export type MainNavSection =
   | 'post-composer'
   | 'content-calendar'
   | 'publishing-queue'
-  | 'campaign-manager';
+  | 'campaign-manager'
+  | 'connected-accounts';
 
 export type CreativeStudioSubView =
   | 'overview'
@@ -285,17 +286,55 @@ export interface ExportRecord {
 
 export type SocialPlatform = 'instagram-carousel' | 'instagram-reel' | 'youtube-shorts' | 'instagram-feed';
 
+export type PublishingLifecycleStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'ready-to-send'
+  | 'publishing'
+  | 'published'
+  | 'partially-published'
+  | 'failed'
+  | 'cancelled';
+
+export type YouTubePrivacyStatus = 'public' | 'unlisted' | 'private';
+
+export interface DestinationPublishState {
+  platform: 'instagram' | 'youtube';
+  format: SocialPlatform;
+  status: 'scheduled' | 'ready-to-send' | 'publishing' | 'published' | 'failed' | 'cancelled';
+  attempts: number;
+  publishedAt?: string;
+  platformPostId?: string;
+  resultUrl?: string;
+  error?: string;
+  inFlightId?: string;
+  needsReconciliation?: boolean;
+  youtubeTitle?: string;
+  youtubeDescription?: string;
+  youtubeTags?: string[];
+  youtubePrivacyStatus?: YouTubePrivacyStatus;
+  instagramCaption?: string;
+}
+
 export interface SocialPost {
   id: string;
   workspaceId: string;
   title: string;
   platform: SocialPlatform;
+  platforms?: Array<'instagram' | 'youtube'>;
   caption: string;
   hashtags: string[];
   mediaAssetIds: string[];
-  status: 'draft' | 'queued' | 'scheduled' | 'published';
-  scheduledDate?: string; // YYYY-MM-DD
-  scheduledTime?: string; // HH:mm
+  status: 'draft' | 'queued' | 'scheduled' | 'ready-to-send' | 'publishing' | 'published' | 'partially-published' | 'failed' | 'cancelled';
+  scheduledDate?: string; // YYYY-MM-DD in selected timezone
+  scheduledTime?: string; // HH:mm in selected timezone
+  timezone?: string; // Default: Africa/Lagos
+  scheduledIso?: string; // Canonical UTC ISO-8601
+  youtubePrivacyStatus?: YouTubePrivacyStatus;
+  backendJobId?: string;
+  backendStatus?: PublishingLifecycleStatus | 'pending';
+  publishResultUrl?: string;
+  publishError?: string;
   campaignId?: string;
   sourceProjectId?: string;
   createdAt: string;

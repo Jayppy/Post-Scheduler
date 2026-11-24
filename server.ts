@@ -3,6 +3,9 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
+import { registerSocialIntegrations } from './server/socialIntegrations';
+import { registerInstagramWebhook, WebhookRawBodyRequest } from './server/instagramWebhook';
+import { registerVideoTranscoder } from './server/videoTranscoder';
 
 const PORT = 3000;
 
@@ -49,7 +52,21 @@ function handleAiError(res: Response, err: unknown) {
 
 async function createApp() {
   const app = express();
-  app.use(express.json({ limit: '32mb' }));
+  app.use(
+    express.json({
+      limit: '80mb',
+      verify: (req, _res, buf) => {
+        const webhookReq = req as WebhookRawBodyRequest;
+        if (webhookReq.originalUrl?.startsWith('/api/webhooks/')) {
+          webhookReq.rawBody = buf;
+        }
+      },
+    })
+  );
+
+  registerSocialIntegrations(app);
+  registerInstagramWebhook(app);
+  registerVideoTranscoder(app);
 
   app.get('/api/health', (_req: Request, res: Response) => {
     const ai = getAiClient();

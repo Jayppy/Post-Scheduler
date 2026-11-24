@@ -9,6 +9,7 @@ import { PostComposerView } from './components/hub/PostComposerView';
 import { ContentCalendarView } from './components/hub/ContentCalendarView';
 import { PublishingQueueView } from './components/hub/PublishingQueueView';
 import { CampaignManagerView } from './components/hub/CampaignManagerView';
+import { ConnectedAccountsView } from './components/hub/ConnectedAccountsView';
 import { StudioOverview } from './components/studio/StudioOverview';
 import { CarouselCreatorView } from './components/studio/CarouselCreatorView';
 import { CarouselEditorView } from './components/studio/CarouselEditorView';
@@ -16,6 +17,8 @@ import { ReelsStudioView } from './components/studio/ReelsStudioView';
 import { DesignThemesView } from './components/studio/DesignThemesView';
 import { CreativeProjectsView } from './components/studio/CreativeProjectsView';
 import { ExportHistoryView } from './components/studio/ExportHistoryView';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { FirebaseProvider } from './context/FirebaseContext';
 
 const ActiveViewRouter: React.FC = () => {
   const { navSection, studioSubView } = useStudio();
@@ -53,6 +56,8 @@ const ActiveViewRouter: React.FC = () => {
       return <PublishingQueueView />;
     case 'campaign-manager':
       return <CampaignManagerView />;
+    case 'connected-accounts':
+      return <ConnectedAccountsView />;
     case 'hub-overview':
     default:
       return <HubOverview />;
@@ -63,11 +68,15 @@ export default function App() {
   const [wsModalOpen, setWsModalOpen] = useState(false);
 
   return (
-    <StudioProvider>
-      <AppShell onOpenWorkspaceSettings={() => setWsModalOpen(true)}>
-        <ActiveViewRouter />
-      </AppShell>
-      <WorkspaceSettingsModal open={wsModalOpen} onClose={() => setWsModalOpen(false)} />
-    </StudioProvider>
+    <ErrorBoundary>
+      <FirebaseProvider>
+        <StudioProvider>
+          <AppShell onOpenWorkspaceSettings={() => setWsModalOpen(true)}>
+            <ActiveViewRouter />
+          </AppShell>
+          <WorkspaceSettingsModal open={wsModalOpen} onClose={() => setWsModalOpen(false)} />
+        </StudioProvider>
+      </FirebaseProvider>
+    </ErrorBoundary>
   );
 }

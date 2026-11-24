@@ -2085,9 +2085,9 @@ export const ReelsStudioView: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           <div className="lg:col-span-6 p-6 rounded-xl bg-[#111114] border border-zinc-800 space-y-5">
             <div>
-              <h2 className="text-sm font-semibold text-zinc-100">Export Settings & Platform Validation</h2>
+              <h2 className="text-sm font-semibold text-zinc-100">Export Settings &amp; Platform Validation</h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                9:16 vertical · 30 FPS · Browser-rendered MP4 (FFmpeg.wasm + Canvas fallback).
+                9:16 vertical · 30 FPS CFR · Verified H.264 (yuv420p) + AAC 44.1kHz Stereo +faststart MP4.
               </p>
             </div>
 
@@ -2224,14 +2224,17 @@ export const ReelsStudioView: React.FC = () => {
                   />
                 </div>
 
-                <div className="text-xs text-zinc-400 font-mono tabular-nums flex flex-wrap gap-3">
+                <div className="text-xs text-zinc-400 font-mono tabular-nums flex flex-wrap gap-2.5">
                   <span>{exportedOutput.width}×{exportedOutput.height}</span>
                   <span>·</span>
-                  <span>{exportedOutput.fps} FPS</span>
+                  <span>{exportedOutput.fps} FPS CFR</span>
                   <span>·</span>
                   <span>{exportedOutput.duration.toFixed(1)}s</span>
                   <span>·</span>
-                  <span>{exportedOutput.extension.toUpperCase()} ({exportedOutput.engineUsed})</span>
+                  <span>
+                    {exportedOutput.verification.videoCodec.toUpperCase()}/{exportedOutput.verification.audioCodec.toUpperCase()}
+                    {exportedOutput.verification.faststart ? ' · faststart OK' : ''}
+                  </span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
