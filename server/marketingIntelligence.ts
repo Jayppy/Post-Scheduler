@@ -23,8 +23,17 @@ import {
   executeSectionManifestGeneration,
   initializeManifestFromHeadings,
 } from './aiProviders/longFormEngine';
+import { aiGenerationLimiter } from './rateLimiters';
 import { ProviderExecutionError } from './aiProviders/types';
-import { requireServerOperator } from './aiProviders/authMiddleware';
+import {
+  type AuthenticatedRequest,
+  requireServerOperator,
+} from './aiProviders/authMiddleware';
+import {
+  checkQuotaAndAvailability,
+  recordProviderError,
+  recordProviderSuccess,
+} from './aiProviders/quotaStore';
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const MARKETING_STORE_PATH = path.join(DATA_DIR, 'marketing-studio.json');
@@ -430,12 +439,20 @@ function buildSeedTopicOpportunities(): TopicOpportunity[] {
   ];
 }
 
-function loadStore(): MarketingStoreFile {
+function getStorePath(scopeKey: string): string {
+  const safeScope = scopeKey.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 96) || 'local-operator';
+  return safeScope === 'local-operator'
+    ? MARKETING_STORE_PATH
+    : path.join(DATA_DIR, `marketing-studio-${safeScope}.json`);
+}
+
+function loadStore(scopeKey = 'local-operator'): MarketingStoreFile {
+  const storePath = getStorePath(scopeKey);
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-    if (!fs.existsSync(MARKETING_STORE_PATH)) {
+    if (!fs.existsSync(storePath)) {
       const initial: MarketingStoreFile = {
         version: 1,
         knowledgeBase: buildDefaultKnowledgeBase(),
@@ -443,10 +460,10 @@ function loadStore(): MarketingStoreFile {
         topicOpportunities: buildSeedTopicOpportunities(),
         drafts: [],
       };
-      fs.writeFileSync(MARKETING_STORE_PATH, JSON.stringify(initial, null, 2), 'utf8');
+      fs.writeFileSync(storePath, JSON.stringify(initial, null, 2), 'utf8');
       return initial;
     }
-    const parsed = JSON.parse(fs.readFileSync(MARKETING_STORE_PATH, 'utf8')) as Partial<MarketingStoreFile>;
+    const parsed = JSON.parse(fs.readFileSync(storePath, 'utf8')) as Partial<MarketingStoreFile>;
     return {
       version: 1,
       knowledgeBase: parsed.knowledgeBase || buildDefaultKnowledgeBase(),
@@ -472,11 +489,14 @@ function loadStore(): MarketingStoreFile {
   }
 }
 
-function saveStore(store: MarketingStoreFile): void {
+function saveStore(store: MarketingStoreFile, scopeKey = 'local-operator'): void {
+  const storePath = getStorePath(scopeKey);
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
-  fs.writeFileSync(MARKETING_STORE_PATH, JSON.stringify(store, null, 2), 'utf8');
+  const tmpPath = `${storePath}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(store, null, 2), 'utf8');
+  fs.renameSync(tmpPath, storePath);
 }
 
 function getOptionalIntegrationsStatus(): OptionalResearchIntegrationStatus[] {
@@ -647,30 +667,46 @@ export function registerMarketingIntelligence(app: Express): void {
   });
 
   // 2. Business Knowledge Base (74 STUDIO)
-  app.get('/api/marketing/knowledge-base', mktGuard, (_req: Request, res: Response) => {
-    const store = loadStore();
+  app.get('/api/marketing/knowledge-base', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
+    const store = loadStore(scope);
     return res.json({ knowledgeBase: store.knowledgeBase });
   });
 
-  app.put('/api/marketing/knowledge-base', mktGuard, (req: Request, res: Response) => {
-    const body = req.body as Partial<BusinessKnowledgeBase>;
+  app.put('/api/marketing/knowledge-base', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
+    const body = (req.body || {}) as Partial<BusinessKnowledgeBase>;
     if (!body || !body.businessName?.trim()) {
       return res.status(400).json({ error: 'Valid businessName is required.' });
     }
-    const store = loadStore();
+    const store = loadStore(scope);
+    const cur = store.knowledgeBase;
     store.knowledgeBase = {
-      ...store.knowledgeBase,
-      ...body,
-      id: store.knowledgeBase.id,
+      id: cur.id,
+      businessName: String(body.businessName).trim().slice(0, 160),
+      websiteUrl: String(body.websiteUrl ?? cur.websiteUrl).trim().slice(0, 300),
+      brandVoice: String(body.brandVoice ?? cur.brandVoice).slice(0, 2000),
+      positioning: String(body.positioning ?? cur.positioning).slice(0, 3000),
+      pricingSummary: String(body.pricingSummary ?? cur.pricingSummary).slice(0, 2000),
+      contactSummary: String(body.contactSummary ?? cur.contactSummary).slice(0, 1200),
+      knownUrls: Array.isArray(body.knownUrls) ? body.knownUrls.slice(0, 30) : cur.knownUrls,
+      services: Array.isArray(body.services) ? body.services.slice(0, 25) : cur.services,
+      idealCustomerProfiles: Array.isArray(body.idealCustomerProfiles)
+        ? body.idealCustomerProfiles.slice(0, 20)
+        : cur.idealCustomerProfiles,
+      verifiedProofItems: Array.isArray(body.verifiedProofItems)
+        ? body.verifiedProofItems.slice(0, 50)
+        : cur.verifiedProofItems,
       updatedAt: new Date().toISOString(),
     };
-    saveStore(store);
+    saveStore(store, scope);
     return res.json({ knowledgeBase: store.knowledgeBase });
   });
 
   // 3. Research & Intelligence Repository
-  app.get('/api/marketing/research', mktGuard, (_req: Request, res: Response) => {
-    const store = loadStore();
+  app.get('/api/marketing/research', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
+    const store = loadStore(scope);
     return res.json({
       sources: store.researchSources,
       opportunities: store.topicOpportunities,
@@ -678,12 +714,13 @@ export function registerMarketingIntelligence(app: Express): void {
     });
   });
 
-  app.post('/api/marketing/research', mktGuard, (req: Request, res: Response) => {
+  app.post('/api/marketing/research', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const body = req.body as Partial<ResearchSourceRecord>;
     if (!body.sourceName?.trim() || !body.finding?.trim()) {
       return res.status(400).json({ error: 'sourceName and finding are required.' });
     }
-    const store = loadStore();
+    const store = loadStore(scope);
     const resolvedAccessMethod = body.accessMethod || 'owner-supplied';
     const record: ResearchSourceRecord = {
       id: createId('src'),
@@ -705,26 +742,28 @@ export function registerMarketingIntelligence(app: Express): void {
       tags: Array.isArray(body.tags) ? body.tags.slice(0, 10) : [],
     };
     store.researchSources = [record, ...store.researchSources];
-    saveStore(store);
+    saveStore(store, scope);
     return res.json({ source: record });
   });
 
-  app.delete('/api/marketing/research/:id', mktGuard, (req: Request, res: Response) => {
+  app.delete('/api/marketing/research/:id', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const id = String(req.params.id || '');
-    const store = loadStore();
+    const store = loadStore(scope);
     store.researchSources = store.researchSources.filter((s) => s.id !== id);
-    saveStore(store);
+    saveStore(store, scope);
     return res.json({ ok: true });
   });
 
   // 3B. Live Grounded Web Research Scan (Gemini + Google Search Grounding)
-  app.post('/api/marketing/research/discover', mktGuard, async (req: Request, res: Response) => {
+  app.post('/api/marketing/research/discover', mktGuard, aiGenerationLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const { focusQuery, category, forceRefresh } = (req.body || {}) as {
       focusQuery?: string;
       category?: ResearchCategory;
       forceRefresh?: boolean;
     };
-    const store = loadStore();
+    const store = loadStore(scope);
 
     // Respect responsible caching when same scan requested recently unless forced
     if (
@@ -741,6 +780,14 @@ export function registerMarketingIntelligence(app: Express): void {
       });
     }
 
+    const quotaGate = checkQuotaAndAvailability('ws-behind-the-release', 'gemini');
+    if (!quotaGate.ok) {
+      return res.status(429).json({
+        error: quotaGate.reason,
+        code: quotaGate.code,
+      });
+    }
+
     const ai = getAiClient();
     if (!ai) {
       return res.status(503).json({
@@ -754,6 +801,7 @@ export function registerMarketingIntelligence(app: Express): void {
       focusQuery?.trim() ||
       'independent music artist marketing trends, Spotify Canvas and short-form video discovery, music charts consumption shifts, IFPI and streaming discovery 2025 2026';
 
+    const startedAt = Date.now();
     try {
       const todayIso = new Date().toISOString().slice(0, 10);
       const response = await generateWithRetry(() =>
@@ -844,10 +892,24 @@ Return valid JSON only.`,
         addedSources.push(record);
       }
 
+      const usageMeta = (response as {
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
+      }).usageMetadata;
+      const inTok = usageMeta?.promptTokenCount || 450;
+      const outTok = usageMeta?.candidatesTokenCount || Math.max(120, Math.ceil((response.text || '').length / 4));
+      recordProviderSuccess({
+        workspaceId: 'ws-behind-the-release',
+        providerId: 'gemini',
+        inputTokens: inTok,
+        outputTokens: outTok,
+        totalTokens: usageMeta?.totalTokenCount || inTok + outTok,
+        latencyMs: Date.now() - startedAt,
+      });
+
       if (addedSources.length > 0) {
         store.researchSources = [...addedSources, ...store.researchSources].slice(0, 60);
         store.lastLiveResearchAt = new Date().toISOString();
-        saveStore(store);
+        saveStore(store, scope);
       }
 
       return res.json({
@@ -858,18 +920,26 @@ Return valid JSON only.`,
         lastLiveResearchAt: store.lastLiveResearchAt,
       });
     } catch (err) {
+      recordProviderError({
+        workspaceId: 'ws-behind-the-release',
+        providerId: 'gemini',
+        taskType: 'grounded-search',
+        errorClass: 'UPSTREAM_UNAVAILABLE',
+        message: err instanceof Error ? err.message : String(err),
+      });
       return handleMarketingAiError(res, 'Live research scan failed', err);
     }
   });
 
   // 4. Automatic Topic Discovery (Multi-Provider Workspace A Profile)
-  app.post('/api/marketing/discover-topics', requireServerOperator('ws-behind-the-release'), async (req: Request, res: Response) => {
+  app.post('/api/marketing/discover-topics', mktGuard, aiGenerationLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const { targetAudience, serviceOffer, contentCategory } = (req.body || {}) as {
       targetAudience?: string;
       serviceOffer?: string;
       contentCategory?: string;
     };
-    const store = loadStore();
+    const store = loadStore(scope);
 
     try {
       const sourceSummary = store.researchSources
@@ -960,7 +1030,7 @@ STRICT RULES:
 
       if (newOpps.length > 0) {
         store.topicOpportunities = [...newOpps, ...store.topicOpportunities].slice(0, 12);
-        saveStore(store);
+        saveStore(store, scope);
       }
 
       return res.json({
@@ -979,13 +1049,14 @@ STRICT RULES:
   });
 
   // 5. Generate 1 Central Concept + 4 Distinct Platform Outputs + Verified Evidence Mapping (Multi-Provider)
-  app.post('/api/marketing/generate', requireServerOperator('ws-behind-the-release'), async (req: Request, res: Response) => {
+  app.post('/api/marketing/generate', mktGuard, aiGenerationLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const input = (req.body || {}) as GenerateMarketingContentInput;
     if (!input.topic?.trim() || !input.targetAudience?.trim()) {
       return res.status(400).json({ error: 'topic and targetAudience are required.' });
     }
 
-    const store = loadStore();
+    const store = loadStore(scope);
     const kb = store.knowledgeBase;
     const xTargetChars = Math.max(25, Math.min(280, Number(input.xTargetChars) || 50));
     const blogWordTarget = Math.max(600, Math.min(2400, Number(input.blogWordTarget) || 1100));
@@ -1254,14 +1325,17 @@ Return strictly valid JSON matching the schema.`,
   });
 
   // 5B. SSE Long-Form Blog Section-Manifest Streaming Endpoint
-  app.post('/api/marketing/blog/stream-manifest', requireServerOperator('ws-behind-the-release'), async (req: Request, res: Response) => {
+  app.post('/api/marketing/blog/stream-manifest', mktGuard, aiGenerationLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const {
+      draftId,
       title,
       centralConcept,
       h2Outline,
       evidenceClaims,
       blogWordTarget,
     } = (req.body || {}) as {
+      draftId?: string;
       title?: string;
       centralConcept?: CentralContentConcept;
       h2Outline?: string[];
@@ -1283,7 +1357,7 @@ Return strictly valid JSON matching the schema.`,
     };
 
     try {
-      const store = loadStore();
+      const store = loadStore(scope);
       const kb = store.knowledgeBase;
       const outlineHeadings =
         Array.isArray(h2Outline) && h2Outline.length >= 2
@@ -1316,8 +1390,27 @@ Return strictly valid JSON matching the schema.`,
         onSectionStart: (index, heading) => sendEvent('section_start', { index, heading }),
         onSectionChunk: (index, heading, chunk, providerId, model) =>
           sendEvent('chunk', { index, heading, chunk, providerId, model }),
-        onSectionDone: (item, updatedManifest) =>
-          sendEvent('section_done', { section: item, manifest: updatedManifest }),
+        onSectionDone: (item, updatedManifest) => {
+          if (draftId) {
+            const latestStore = loadStore(scope);
+            const idx = latestStore.drafts.findIndex((d) => d.id === draftId);
+            if (idx !== -1 && latestStore.drafts[idx].platforms?.blog) {
+              latestStore.drafts[idx] = {
+                ...latestStore.drafts[idx],
+                platforms: {
+                  ...latestStore.drafts[idx].platforms,
+                  blog: {
+                    ...latestStore.drafts[idx].platforms.blog,
+                    blogManifest: updatedManifest,
+                  },
+                },
+                updatedAt: new Date().toISOString(),
+              };
+              saveStore(latestStore, scope);
+            }
+          }
+          sendEvent('section_done', { section: item, manifest: updatedManifest });
+        },
         onFallback: (from, to, reason) => sendEvent('fallback', { from, to, reason }),
       });
 
@@ -1338,7 +1431,8 @@ Return strictly valid JSON matching the schema.`,
   });
 
   // 5C. Incomplete-Section Continuation / Recovery (No Duplicate Headings)
-  app.post('/api/marketing/blog/continue-manifest', requireServerOperator('ws-behind-the-release'), async (req: Request, res: Response) => {
+  app.post('/api/marketing/blog/continue-manifest', mktGuard, aiGenerationLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const {
       title,
       centralConcept,
@@ -1358,7 +1452,7 @@ Return strictly valid JSON matching the schema.`,
     }
 
     try {
-      const store = loadStore();
+      const store = loadStore(scope);
       const kb = store.knowledgeBase;
       const evidenceText = (evidenceClaims || [])
         .map((c) => `- ${c.claim} [${c.isUnverifiedHypothesis ? 'Editorial hypothesis' : c.sourceName}]`)
@@ -1389,7 +1483,8 @@ Return strictly valid JSON matching the schema.`,
   });
 
   // 6. Regenerate SINGLE Platform Output (Preserves Central Content Concept Unchanged)
-  app.post('/api/marketing/regenerate-platform', requireServerOperator('ws-behind-the-release'), async (req: Request, res: Response) => {
+  app.post('/api/marketing/regenerate-platform', mktGuard, aiGenerationLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const {
       platform,
       centralConcept,
@@ -1412,7 +1507,7 @@ Return strictly valid JSON matching the schema.`,
       return res.status(400).json({ error: 'platform and centralConcept are required.' });
     }
 
-    const store = loadStore();
+    const store = loadStore(scope);
     const kb = store.knowledgeBase;
     const shortChars = Math.max(25, Math.min(280, Number(xTargetChars) || 50));
     const targetWords = Math.max(600, Math.min(2400, Number(blogWordTarget) || 1100));
@@ -1581,20 +1676,24 @@ Include SEO title, meta description, primaryKeyword, secondaryKeywords, searchIn
   });
 
   // 7. Content Library Drafts CRUD (Strictly isolated from Behind The Release scheduler)
-  app.get('/api/marketing/drafts', mktGuard, (_req: Request, res: Response) => {
-    const store = loadStore();
+  app.get('/api/marketing/drafts', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
+    const store = loadStore(scope);
     return res.json({ drafts: store.drafts });
   });
 
-  app.post('/api/marketing/drafts', mktGuard, (req: Request, res: Response) => {
+  app.post('/api/marketing/drafts', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const body = req.body as Partial<MarketingDraft>;
     if (!body.title?.trim() || !body.centralConcept || !body.platforms) {
       return res.status(400).json({ error: 'title, centralConcept, and platforms are required.' });
     }
-    const store = loadStore();
+    const store = loadStore(scope);
     const nowIso = new Date().toISOString();
+    const existingIdx = body.id ? store.drafts.findIndex((d) => d.id === body.id) : -1;
+    const assignedId = existingIdx !== -1 ? store.drafts[existingIdx].id : createId('mdraft');
     const draft: MarketingDraft = {
-      id: body.id?.trim() || createId('mdraft'),
+      id: assignedId,
       title: body.title.trim().slice(0, 240),
       status: body.status || 'draft',
       targetAudience: body.targetAudience || '',
@@ -1611,43 +1710,59 @@ Include SEO title, meta description, primaryKeyword, secondaryKeywords, searchIn
       centralConcept: body.centralConcept,
       platforms: body.platforms,
       evidenceClaims: Array.isArray(body.evidenceClaims) ? body.evidenceClaims : [],
-      createdAt: body.createdAt || nowIso,
+      createdAt: existingIdx !== -1 ? store.drafts[existingIdx].createdAt : nowIso,
       updatedAt: nowIso,
     };
 
-    const idx = store.drafts.findIndex((d) => d.id === draft.id);
-    if (idx !== -1) {
-      store.drafts[idx] = draft;
+    if (existingIdx !== -1) {
+      store.drafts[existingIdx] = draft;
     } else {
       store.drafts.unshift(draft);
     }
-    saveStore(store);
+    saveStore(store, scope);
     return res.json({ draft });
   });
 
-  app.put('/api/marketing/drafts/:id', mktGuard, (req: Request, res: Response) => {
+  app.put('/api/marketing/drafts/:id', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const id = String(req.params.id || '');
-    const store = loadStore();
+    const store = loadStore(scope);
     const idx = store.drafts.findIndex((d) => d.id === id);
     if (idx === -1) {
       return res.status(404).json({ error: 'Marketing draft not found.' });
     }
+    const existing = store.drafts[idx];
+    const body = (req.body || {}) as Partial<MarketingDraft>;
     const updated: MarketingDraft = {
-      ...store.drafts[idx],
-      ...(req.body as Partial<MarketingDraft>),
+      ...existing,
+      ...(body.title !== undefined ? { title: String(body.title).trim().slice(0, 240) || existing.title } : {}),
+      ...(body.status !== undefined ? { status: body.status } : {}),
+      ...(body.targetAudience !== undefined ? { targetAudience: body.targetAudience } : {}),
+      ...(body.serviceOffer !== undefined ? { serviceOffer: String(body.serviceOffer).slice(0, 200) } : {}),
+      ...(body.objective !== undefined ? { objective: String(body.objective).slice(0, 600) } : {}),
+      ...(body.awarenessStage !== undefined ? { awarenessStage: body.awarenessStage } : {}),
+      ...(body.contentCategory !== undefined ? { contentCategory: body.contentCategory } : {}),
+      ...(body.topic !== undefined ? { topic: String(body.topic).slice(0, 500) } : {}),
+      ...(body.tone !== undefined ? { tone: String(body.tone).slice(0, 200) } : {}),
+      ...(body.ctaObjective !== undefined ? { ctaObjective: String(body.ctaObjective).slice(0, 400) } : {}),
+      ...(body.centralConcept !== undefined ? { centralConcept: body.centralConcept } : {}),
+      ...(body.platforms !== undefined ? { platforms: body.platforms } : {}),
+      ...(Array.isArray(body.evidenceClaims) ? { evidenceClaims: body.evidenceClaims } : {}),
       id,
+      createdAt: existing.createdAt,
       updatedAt: new Date().toISOString(),
     };
     store.drafts[idx] = updated;
-    saveStore(store);
+    saveStore(store, scope);
     return res.json({ draft: updated });
   });
 
-  app.delete('/api/marketing/drafts/:id', mktGuard, (req: Request, res: Response) => {
+  app.delete('/api/marketing/drafts/:id', mktGuard, (req: AuthenticatedRequest, res: Response) => {
+    const scope = req.operatorContext?.ownerScopeKey || 'local-operator';
     const id = String(req.params.id || '');
-    const store = loadStore();
+    const store = loadStore(scope);
     store.drafts = store.drafts.filter((d) => d.id !== id);
-    saveStore(store);
+    saveStore(store, scope);
     return res.json({ ok: true });
   });
 }

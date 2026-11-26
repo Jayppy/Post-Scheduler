@@ -4,6 +4,7 @@ import {
   SocialPlatform,
   YouTubePrivacyStatus,
 } from '../types/studio';
+import { getOperatorAuthHeaders } from './authHeaders';
 
 export interface PlatformStatusInfo {
   configured: boolean;
@@ -116,18 +117,22 @@ export class IntegrationsApiError extends Error {
 
 export const integrationsClient = {
   async getStatus(workspaceId: string, verify = false): Promise<IntegrationsStatusResponse> {
+    const headers = await getOperatorAuthHeaders();
     const res = await fetch(
       `/api/integrations/status?workspaceId=${encodeURIComponent(workspaceId)}${
         verify ? '&verify=true' : ''
-      }`
+      }`,
+      { headers }
     );
     if (!res.ok) throw new IntegrationsApiError('Failed to load connected account status.', res.status);
     return res.json();
   },
 
   async getOAuthUrl(workspaceId: string, platform: 'youtube' | 'instagram'): Promise<string> {
+    const headers = await getOperatorAuthHeaders();
     const res = await fetch(
-      `/api/auth/${platform}/url?workspaceId=${encodeURIComponent(workspaceId)}`
+      `/api/auth/${platform}/url?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { headers }
     );
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.url) {
@@ -141,9 +146,10 @@ export const integrationsClient = {
   },
 
   async disconnect(workspaceId: string, platform: 'youtube' | 'instagram'): Promise<void> {
+    const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
     const res = await fetch('/api/integrations/disconnect', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ workspaceId, platform }),
     });
     if (!res.ok) throw new IntegrationsApiError('Failed to disconnect account.', res.status);
@@ -159,9 +165,10 @@ export const integrationsClient = {
     youtubePrivacyStatus?: YouTubePrivacyStatus;
     mediaItems: Array<{ filename: string; mimeType: string; base64Data: string }>;
   }): Promise<{ ok: boolean; resultUrl?: string; platformPostId?: string; publishedAt?: string }> {
+    const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
     const res = await fetch('/api/publish/now', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
@@ -174,8 +181,10 @@ export const integrationsClient = {
   },
 
   async listScheduledJobs(workspaceId: string): Promise<ScheduledJobSummary[]> {
+    const headers = await getOperatorAuthHeaders();
     const res = await fetch(
-      `/api/scheduled-jobs?workspaceId=${encodeURIComponent(workspaceId)}`
+      `/api/scheduled-jobs?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { headers }
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -183,8 +192,10 @@ export const integrationsClient = {
   },
 
   async listPublishHistory(workspaceId: string): Promise<PublishHistoryEntry[]> {
+    const headers = await getOperatorAuthHeaders();
     const res = await fetch(
-      `/api/publish-history?workspaceId=${encodeURIComponent(workspaceId)}`
+      `/api/publish-history?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { headers }
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -214,9 +225,10 @@ export const integrationsClient = {
     error?: string;
     mediaItems: Array<{ filename: string; mimeType: string; base64Data: string }>;
   }): Promise<ScheduledJobSummary> {
+    const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
     const res = await fetch('/api/scheduled-jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
@@ -244,9 +256,10 @@ export const integrationsClient = {
       mediaItems: Array<{ filename: string; mimeType: string; base64Data: string }>;
     }>
   ): Promise<ScheduledJobSummary> {
+    const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
     const res = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(patch),
     });
     const data = await res.json().catch(() => ({}));
@@ -270,9 +283,10 @@ export const integrationsClient = {
     status: string;
     error?: string;
   }> {
+    const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
     const res = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/send`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
@@ -294,9 +308,10 @@ export const integrationsClient = {
     outcomes: Record<string, { reconciledPublished: boolean; detail: string }>;
     job: ScheduledJobSummary;
   }> {
+    const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
     const res = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/reconcile`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ platform }),
     });
     const data = await res.json().catch(() => ({}));
@@ -312,9 +327,10 @@ export const integrationsClient = {
     jobId: string,
     targets?: Array<'instagram' | 'youtube'>
   ): Promise<{ ok: boolean; partial?: boolean; resultUrl?: string; status: string; job?: ScheduledJobSummary }> {
+    const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
     const res = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/retry`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ targets }),
     });
     const data = await res.json().catch(() => ({}));
@@ -328,8 +344,10 @@ export const integrationsClient = {
   },
 
   async cancelScheduledJob(jobId: string): Promise<void> {
+    const headers = await getOperatorAuthHeaders();
     const res = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/cancel`, {
       method: 'POST',
+      headers,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -340,8 +358,10 @@ export const integrationsClient = {
   },
 
   async deleteScheduledJob(jobId: string): Promise<void> {
+    const headers = await getOperatorAuthHeaders();
     const res = await fetch(`/api/scheduled-jobs/${encodeURIComponent(jobId)}`, {
       method: 'DELETE',
+      headers,
     });
     if (!res.ok) {
       throw new IntegrationsApiError('Failed to delete scheduled post.', res.status);

@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import {
-  Activity,
   BarChart3,
   BookOpen,
   Briefcase,
   Calendar,
   Clapperboard,
   Cpu,
-  FileText,
+  Film,
   FolderKanban,
   Globe2,
   History,
@@ -19,13 +18,13 @@ import {
   ListChecks,
   Megaphone,
   Menu,
+  MessageSquare,
+  MessageSquarePlus,
   Palette,
   PenSquare,
   Plus,
   Settings,
   Sparkles,
-  Target,
-  Users,
   Wand2,
   X,
 } from 'lucide-react';
@@ -36,6 +35,7 @@ import {
   MarketingSubView,
   SalesSubView,
 } from '../../types/studio';
+import { OfflineIndicator, PWAInstallButton } from '../pwa/PWAInstallButton';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -65,6 +65,7 @@ const STUDIO_SUB_NAV: Array<{
   { id: 'overview', label: 'Creative Studio Overview', icon: Wand2 },
   { id: 'carousel-creator', label: 'Carousel Creator', icon: Layers },
   { id: 'reels-studio', label: 'Reels & Shorts Studio', icon: Clapperboard },
+  { id: 'video-studio', label: 'Video Studio', icon: Film },
   { id: 'design-themes', label: 'Design Themes', icon: Palette },
   { id: 'creative-projects', label: 'Creative Projects', icon: FolderKanban },
   { id: 'export-history', label: 'Export History', icon: History },
@@ -88,13 +89,9 @@ const SALES_SUB_NAV: Array<{
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: 'dashboard', label: 'Sales Overview', icon: BarChart3 },
-  { id: 'leads', label: 'Leads & Prospects', icon: Users },
-  { id: 'intelligence', label: 'Lead Intelligence', icon: Target },
-  { id: 'responses', label: 'Responses & Proposals', icon: FileText },
-  { id: 'campaigns', label: 'Sales Campaigns', icon: Megaphone },
-  { id: 'activity', label: 'Activity History', icon: Activity },
-  { id: 'knowledge-base', label: '74 STUDIO Sales Profile', icon: BookOpen },
+  { id: 'chat', label: 'Artist Chat Assistant', icon: MessageSquare },
+  { id: 'knowledge-base', label: '74 STUDIO Profile & Pricing KB', icon: BookOpen },
+  { id: 'settings', label: 'Promo & Settings', icon: Settings },
 ];
 
 export const AppShell: React.FC<AppShellProps> = ({ children, onOpenWorkspaceSettings }) => {
@@ -239,7 +236,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenWorkspaceSet
               )}
             </div>
             <div className="text-[10px] text-zinc-500 truncate">
-              Lead Intel · Buyer Intent · Proposals
+              Artist Chat · Pricing KB · 10% Offer
             </div>
           </button>
         </div>
@@ -477,24 +474,24 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenWorkspaceSet
               <>
                 <button
                   type="button"
-                  onClick={() => handleSelectSalesSub('leads')}
+                  onClick={() => handleSelectSalesSub('chat')}
                   className="hover:text-sky-300 transition-colors whitespace-nowrap"
                 >
-                  Leads
+                  Artist Chat
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSelectSalesSub('intelligence')}
+                  onClick={() => handleSelectSalesSub('knowledge-base')}
                   className="hover:text-sky-300 transition-colors whitespace-nowrap"
                 >
-                  Intelligence
+                  Pricing KB
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSelectSalesSub('responses')}
+                  onClick={() => handleSelectSalesSub('settings')}
                   className="hover:text-sky-300 transition-colors whitespace-nowrap"
                 >
-                  Proposals
+                  Settings
                 </button>
                 <button
                   type="button"
@@ -515,17 +512,17 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenWorkspaceSet
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleSelectStudioSub('video-studio')}
+                  className="hover:text-zinc-100 transition-colors whitespace-nowrap"
+                >
+                  Video Studio
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleSelectHubNav('connected-accounts')}
                   className="hover:text-zinc-100 transition-colors whitespace-nowrap"
                 >
                   Accounts
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectHubNav('content-calendar')}
-                  className="hover:text-zinc-100 transition-colors whitespace-nowrap"
-                >
-                  Calendar
                 </button>
                 <button
                   type="button"
@@ -545,15 +542,16 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenWorkspaceSet
             )}
           </div>
 
-          <div className="shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton />
             {isSalesWorkspace ? (
               <button
                 type="button"
-                onClick={() => handleSelectSalesSub('responses')}
+                onClick={() => handleSelectSalesSub('chat')}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md bg-sky-500 text-slate-950 hover:bg-sky-400 text-xs font-semibold transition-colors whitespace-nowrap"
               >
-                <FileText className="w-3.5 h-3.5" />
-                <span>New Proposal</span>
+                <MessageSquarePlus className="w-3.5 h-3.5" />
+                <span>Artist Assistant</span>
               </button>
             ) : isMarketingActive ? (
               <button
@@ -567,15 +565,17 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenWorkspaceSet
             ) : (
               <button
                 type="button"
-                onClick={() => handleSelectStudioSub('carousel-creator')}
+                onClick={() => handleSelectStudioSub('video-studio')}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md bg-zinc-100 text-zinc-950 hover:bg-white text-xs font-semibold transition-colors whitespace-nowrap"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>New Production</span>
+                <span>New Video</span>
               </button>
             )}
           </div>
         </header>
+
+        <OfflineIndicator />
 
         {/* Active View Content */}
         <main className="flex-1 p-4 lg:p-8 max-w-[1440px] w-full mx-auto">

@@ -22,6 +22,7 @@ import { FirebaseProvider } from './context/FirebaseContext';
 import { MarketingStudioView } from './components/marketing/MarketingStudioView';
 import { AiProviderDashboardView } from './components/ai/AiProviderDashboardView';
 import { SalesIntelligenceView } from './components/sales/SalesIntelligenceView';
+import { VideoStudioView } from './components/videoStudio/VideoStudioView';
 
 const ActiveViewRouter: React.FC = () => {
   const { navSection, studioSubView } = useStudio();
@@ -46,6 +47,8 @@ const ActiveViewRouter: React.FC = () => {
         return <CarouselEditorView />;
       case 'reels-studio':
         return <ReelsStudioView />;
+      case 'video-studio':
+        return <VideoStudioView />;
       case 'design-themes':
         return <DesignThemesView />;
       case 'creative-projects':

@@ -1,4 +1,5 @@
 import { SlideLayoutVariant } from '../types/studio';
+import { getOperatorAuthHeaders } from './authHeaders';
 
 export interface GeneratedSlidePayload {
   role: string;
@@ -57,9 +58,10 @@ export class AiApiError extends Error {
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const headers = await getOperatorAuthHeaders({ 'Content-Type': 'application/json' });
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
 

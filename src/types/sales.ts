@@ -21,6 +21,13 @@ export type SalesPipelineStage =
   | 'won'
   | 'archived';
 
+export interface SalesServiceTier {
+  id: string;
+  tierName: string;
+  priceLabel: string;
+  durationOrScope: string;
+}
+
 export interface SalesServiceOffer {
   id: string;
   name: string;
@@ -28,7 +35,16 @@ export interface SalesServiceOffer {
   deliverables: string[];
   idealFor: string[];
   differentiator: string;
+  tiers?: SalesServiceTier[];
   verifiedFromWebsite: boolean;
+}
+
+export interface SalesKbCustomEntry {
+  id: string;
+  title: string;
+  category: 'pricing' | 'service' | 'faq' | 'objection' | 'policy';
+  content: string;
+  updatedAt: string;
 }
 
 export interface SalesKnowledgeBase {
@@ -36,18 +52,61 @@ export interface SalesKnowledgeBase {
   workspaceId: 'ws-74-studio-sales';
   businessName: string;
   websiteUrl: string;
+  contactPageUrl: string;
   brandVoice: string;
   positioning: string;
   pricingPolicy: string;
   contactSummary: string;
   knownUrls: Array<{ label: string; url: string }>;
   services: SalesServiceOffer[];
+  customEntries?: SalesKbCustomEntry[];
   qualificationCriteria: string;
   approvedMessagingNotes: string;
   noFabricationGuard: string;
   updatedAt: string;
 }
 
+export interface SalesStudioSettings {
+  promoEnabled: boolean;
+  promoPercentage: number;
+  promoLabel: string;
+  promoScope: string;
+  enforceLowercase: boolean;
+  defaultLengthGuidance: string;
+  extraToneNotes: string;
+  updatedAt: string;
+}
+
+export interface SalesChatMessage {
+  id: string;
+  conversationId: string;
+  role: 'artist' | 'assistant';
+  content: string;
+  artistNote?: string;
+  attachmentName?: string;
+  attachmentPreviewUrl?: string;
+  providerId?: AiProviderId | 'fallback';
+  model?: string;
+  wasFallback?: boolean;
+  edited?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SalesConversation {
+  id: string;
+  workspaceId: 'ws-74-studio-sales';
+  title: string;
+  artistName?: string;
+  lastMessagePreview: string;
+  messages: SalesChatMessage[];
+  pinned?: boolean;
+  archived?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Legacy CRM types retained solely for archived backend records & Supabase migration
 export interface SalesLeadRecord {
   id: string;
   workspaceId: 'ws-74-studio-sales';

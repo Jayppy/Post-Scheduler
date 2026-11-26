@@ -1,8 +1,31 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import type { Express, Request, Response } from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
 import { decryptSecret, EncryptedPayload, encryptSecret, getDataDirPath } from './tokenCrypto';
+import { requireServerOperator } from './aiProviders/authMiddleware';
+import {
+  authAndIntegrationMutationLimiter,
+  integrationReadLimiter,
+} from './rateLimiters';
+
+const MEDIA_PREVIEW_HMAC_KEY = crypto.randomBytes(32);
+
+function signMediaPreviewToken(jobId: string, index: number): string {
+  return crypto
+    .createHmac('sha256', MEDIA_PREVIEW_HMAC_KEY)
+    .update(`${jobId}:${index}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+function verifyMediaPreviewToken(jobId: string, index: number, sig: string): boolean {
+  if (!sig || typeof sig !== 'string') return false;
+  const expected = signMediaPreviewToken(jobId, index);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 export type ConnectedPlatform = 'youtube' | 'instagram';
 export type SocialFormat = 'youtube-shorts' | 'instagram-reel' | 'instagram-carousel' | 'instagram-feed';
@@ -265,7 +288,7 @@ function serializeJobSummary(job: ScheduledPublishJob) {
       index,
       filename: m.filename,
       mimeType: m.mimeType,
-      url: `/api/scheduled-jobs/${encodeURIComponent(job.id)}/media/${index}`,
+      url: `/api/scheduled-jobs/${encodeURIComponent(job.id)}/media/${index}?sig=${signMediaPreviewToken(job.id, index)}`,
     })),
   };
 }
@@ -1293,7 +1316,9 @@ async function sendSingleDestination(
 }
 
 export function registerSocialIntegrations(app: Express) {
-  // Temporary public media endpoint for Instagram Graph API container ingestion
+  const socialAuthGuard = requireServerOperator('ws-behind-the-release');
+
+  // Temporary public media endpoint for Instagram Graph API container ingestion (token-scoped)
   app.get('/api/temp-media/:token', (req: Request, res: Response) => {
     const token = String(req.params.token || '');
     const entry = tempMediaStore.get(token);
@@ -1307,7 +1332,7 @@ export function registerSocialIntegrations(app: Express) {
   });
 
   // Status of OAuth credentials and workspace connections (never exposes tokens)
-  app.get('/api/integrations/status', async (req: Request, res: Response) => {
+  app.get('/api/integrations/status', socialAuthGuard, integrationReadLimiter, async (req: Request, res: Response) => {
     const workspaceId = String(req.query.workspaceId || '').trim();
     const shouldVerify = req.query.verify === 'true';
     if (!workspaceId) {
@@ -1382,7 +1407,7 @@ export function registerSocialIntegrations(app: Express) {
   });
 
   // 1A. YouTube OAuth URL generator
-  app.get('/api/auth/youtube/url', (req: Request, res: Response) => {
+  app.get('/api/auth/youtube/url', socialAuthGuard, authAndIntegrationMutationLimiter, (req: Request, res: Response) => {
     const workspaceId = String(req.query.workspaceId || '').trim();
     if (!workspaceId) {
       return res.status(400).json({ error: 'workspaceId is required.' });
@@ -1535,7 +1560,7 @@ export function registerSocialIntegrations(app: Express) {
   app.get(['/api/auth/youtube/callback', '/api/auth/youtube/callback/'], handleYouTubeCallback);
 
   // 2A. Meta Unified Login (Facebook Login for Business) OAuth URL generator
-  app.get('/api/auth/instagram/url', (req: Request, res: Response) => {
+  app.get('/api/auth/instagram/url', socialAuthGuard, authAndIntegrationMutationLimiter, (req: Request, res: Response) => {
     const workspaceId = String(req.query.workspaceId || '').trim();
     if (!workspaceId) {
       return res.status(400).json({ error: 'workspaceId is required.' });
@@ -1781,7 +1806,7 @@ export function registerSocialIntegrations(app: Express) {
   app.get(['/api/auth/instagram/callback', '/api/auth/instagram/callback/'], handleInstagramCallback);
 
   // Disconnect workspace integration
-  app.post('/api/integrations/disconnect', (req: Request, res: Response) => {
+  app.post('/api/integrations/disconnect', socialAuthGuard, authAndIntegrationMutationLimiter, (req: Request, res: Response) => {
     const { workspaceId, platform } = req.body as {
       workspaceId: string;
       platform: ConnectedPlatform;
@@ -1795,7 +1820,7 @@ export function registerSocialIntegrations(app: Express) {
   });
 
   // Immediate Direct Send Endpoint (manual Send Now from Composer without prior schedule)
-  app.post('/api/publish/now', async (req: Request, res: Response) => {
+  app.post('/api/publish/now', socialAuthGuard, authAndIntegrationMutationLimiter, async (req: Request, res: Response) => {
     const {
       workspaceId,
       postId,
@@ -1896,7 +1921,7 @@ export function registerSocialIntegrations(app: Express) {
   });
 
   // Scheduled Queue & History Management (NO automatic background publishing)
-  app.get('/api/scheduled-jobs', (req: Request, res: Response) => {
+  app.get('/api/scheduled-jobs', socialAuthGuard, integrationReadLimiter, (req: Request, res: Response) => {
     const workspaceId = String(req.query.workspaceId || '').trim();
     const list = Array.from(scheduledJobs.values())
       .filter((j) => !workspaceId || j.workspaceId === workspaceId)
@@ -1905,29 +1930,45 @@ export function registerSocialIntegrations(app: Express) {
     return res.json({ jobs: list });
   });
 
-  // Serve stored media preview for confirmation modal
-  app.get('/api/scheduled-jobs/:id/media/:index', (req: Request, res: Response) => {
-    const id = String(req.params.id || '');
-    const index = Number(req.params.index || 0);
-    const job = scheduledJobs.get(id);
-    if (!job || Number.isNaN(index) || index < 0 || index >= job.mediaItems.length) {
-      return res.status(404).send('Media preview not found.');
+  // Serve stored media preview for confirmation modal (verified by HMAC preview signature OR operator auth)
+  app.get(
+    '/api/scheduled-jobs/:id/media/:index',
+    integrationReadLimiter,
+    (req: Request, res: Response, next: NextFunction) => {
+      const id = String(req.params.id || '');
+      const index = Number(req.params.index || 0);
+      const sig = String(req.query.sig || '');
+      if (verifyMediaPreviewToken(id, index, sig)) {
+        return next();
+      }
+      return socialAuthGuard(req, res, next);
+    },
+    (req: Request, res: Response) => {
+      const id = String(req.params.id || '');
+      const index = Number(req.params.index || 0);
+      const job = scheduledJobs.get(id);
+      if (!job || Number.isNaN(index) || index < 0 || index >= job.mediaItems.length) {
+        return res.status(404).send('Media preview not found.');
+      }
+      if (job.workspaceId !== 'ws-behind-the-release') {
+        return res.status(403).json({ error: 'Cross-workspace access denied.', code: 'WORKSPACE_ISOLATION_VIOLATION' });
+      }
+      const item = job.mediaItems[index];
+      const buf = Buffer.from(item.base64Data, 'base64');
+      res.setHeader('Content-Type', item.mimeType || 'application/octet-stream');
+      res.setHeader('Content-Length', String(buf.length));
+      return res.send(buf);
     }
-    const item = job.mediaItems[index];
-    const buf = Buffer.from(item.base64Data, 'base64');
-    res.setHeader('Content-Type', item.mimeType || 'application/octet-stream');
-    res.setHeader('Content-Length', String(buf.length));
-    return res.send(buf);
-  });
+  );
 
-  app.get('/api/publish-history', (req: Request, res: Response) => {
+  app.get('/api/publish-history', socialAuthGuard, integrationReadLimiter, (req: Request, res: Response) => {
     const workspaceId = String(req.query.workspaceId || '').trim();
     const history = publishHistory.filter((h) => !workspaceId || h.workspaceId === workspaceId);
     return res.json({ history });
   });
 
   // Create or Update a Scheduled / Draft / Rehydrated post in the authoritative Schedule & Send queue
-  app.post('/api/scheduled-jobs', (req: Request, res: Response) => {
+  app.post('/api/scheduled-jobs', socialAuthGuard, authAndIntegrationMutationLimiter, (req: Request, res: Response) => {
     const body = req.body as {
       workspaceId: string;
       postId: string;
@@ -2066,11 +2107,14 @@ export function registerSocialIntegrations(app: Express) {
     });
   });
 
-  app.patch('/api/scheduled-jobs/:id', (req: Request, res: Response) => {
+  app.patch('/api/scheduled-jobs/:id', socialAuthGuard, authAndIntegrationMutationLimiter, (req: Request, res: Response) => {
     const id = String(req.params.id || '');
     const job = scheduledJobs.get(id);
     if (!job) {
       return res.status(404).json({ error: 'Scheduled post not found.' });
+    }
+    if (job.workspaceId !== 'ws-behind-the-release') {
+      return res.status(403).json({ error: 'Cross-workspace access denied.', code: 'WORKSPACE_ISOLATION_VIOLATION' });
     }
     if (job.status === 'publishing' || job.status === 'published') {
       return res.status(409).json({ error: `Cannot edit a ${job.status} post.` });
@@ -2165,11 +2209,14 @@ export function registerSocialIntegrations(app: Express) {
   });
 
   // Explicit Manual Send Now endpoint (supports independent or dual-platform publishing)
-  app.post('/api/scheduled-jobs/:id/send', async (req: Request, res: Response) => {
+  app.post('/api/scheduled-jobs/:id/send', socialAuthGuard, authAndIntegrationMutationLimiter, async (req: Request, res: Response) => {
     const id = String(req.params.id || '');
     const job = scheduledJobs.get(id);
     if (!job) {
       return res.status(404).json({ error: 'Scheduled post not found.' });
+    }
+    if (job.workspaceId !== 'ws-behind-the-release') {
+      return res.status(403).json({ error: 'Cross-workspace access denied.', code: 'WORKSPACE_ISOLATION_VIOLATION' });
     }
     if (job.status === 'cancelled') {
       return res.status(409).json({ error: 'Cancelled posts must be rescheduled before sending.' });
@@ -2269,11 +2316,14 @@ export function registerSocialIntegrations(app: Express) {
   });
 
   // Explicit Reconciliation Endpoint when a network disconnect happened mid-publish
-  app.post('/api/scheduled-jobs/:id/reconcile', async (req: Request, res: Response) => {
+  app.post('/api/scheduled-jobs/:id/reconcile', socialAuthGuard, authAndIntegrationMutationLimiter, async (req: Request, res: Response) => {
     const id = String(req.params.id || '');
     const job = scheduledJobs.get(id);
     if (!job) {
       return res.status(404).json({ error: 'Scheduled post not found.' });
+    }
+    if (job.workspaceId !== 'ws-behind-the-release') {
+      return res.status(403).json({ error: 'Cross-workspace access denied.', code: 'WORKSPACE_ISOLATION_VIOLATION' });
     }
     const platform = req.body?.platform as ConnectedPlatform | undefined;
     const targets = job.destinations.filter(
@@ -2296,11 +2346,14 @@ export function registerSocialIntegrations(app: Express) {
   });
 
   // Backwards-compatible retry endpoint delegating cleanly to manual non-duplicating send
-  app.post('/api/scheduled-jobs/:id/retry', async (req: Request, res: Response) => {
+  app.post('/api/scheduled-jobs/:id/retry', socialAuthGuard, authAndIntegrationMutationLimiter, async (req: Request, res: Response) => {
     const id = String(req.params.id || '');
     const job = scheduledJobs.get(id);
     if (!job) {
       return res.status(404).json({ error: 'Scheduled post not found.' });
+    }
+    if (job.workspaceId !== 'ws-behind-the-release') {
+      return res.status(403).json({ error: 'Cross-workspace access denied.', code: 'WORKSPACE_ISOLATION_VIOLATION' });
     }
     if (job.status === 'published' || job.status === 'publishing') {
       return res.status(409).json({ error: `Job is already ${job.status}.` });
@@ -2333,11 +2386,14 @@ export function registerSocialIntegrations(app: Express) {
     });
   });
 
-  app.post('/api/scheduled-jobs/:id/cancel', (req: Request, res: Response) => {
+  app.post('/api/scheduled-jobs/:id/cancel', socialAuthGuard, authAndIntegrationMutationLimiter, (req: Request, res: Response) => {
     const id = String(req.params.id || '');
     const job = scheduledJobs.get(id);
     if (!job) {
       return res.status(404).json({ error: 'Scheduled post not found.' });
+    }
+    if (job.workspaceId !== 'ws-behind-the-release') {
+      return res.status(403).json({ error: 'Cross-workspace access denied.', code: 'WORKSPACE_ISOLATION_VIOLATION' });
     }
     if (job.status === 'published' || job.status === 'publishing') {
       return res.status(409).json({ error: `Cannot cancel a ${job.status} post.` });
@@ -2353,8 +2409,12 @@ export function registerSocialIntegrations(app: Express) {
     return res.json({ ok: true, status: job.status, job: serializeJobSummary(job) });
   });
 
-  app.delete('/api/scheduled-jobs/:id', (req: Request, res: Response) => {
+  app.delete('/api/scheduled-jobs/:id', socialAuthGuard, authAndIntegrationMutationLimiter, (req: Request, res: Response) => {
     const id = String(req.params.id || '');
+    const job = scheduledJobs.get(id);
+    if (job && job.workspaceId !== 'ws-behind-the-release') {
+      return res.status(403).json({ error: 'Cross-workspace access denied.', code: 'WORKSPACE_ISOLATION_VIOLATION' });
+    }
     scheduledJobs.delete(id);
     saveVaultToDisk();
     return res.json({ ok: true });

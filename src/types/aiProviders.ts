@@ -6,6 +6,8 @@ export type AiTaskType =
   | 'creative-copy'
   | 'carousel-structure'
   | 'reels-plan'
+  | 'video-script'
+  | 'video-scene-regen'
   | 'marketing-generate'
   | 'marketing-platform'
   | 'long-form-article'

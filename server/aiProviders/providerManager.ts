@@ -18,6 +18,7 @@ import {
   loadQuotaStore,
   recordProviderError,
   recordProviderFallback,
+  recordProviderHealthProbe,
   recordProviderSuccess,
 } from './quotaStore';
 import {
@@ -333,12 +334,9 @@ export async function testProviderConnection(
 
   try {
     const probe = await adapter.healthCheck(spec, Math.min(12_000, wsCfg.requestTimeoutMs));
-    recordProviderSuccess({
-      workspaceId,
+    recordProviderHealthProbe({
       providerId,
-      inputTokens: 8,
-      outputTokens: 4,
-      totalTokens: 12,
+      ok: probe.ok,
       latencyMs: probe.latencyMs,
     });
     return {

@@ -55,14 +55,21 @@ function classifyHttpFailure(
     });
   }
 
-  if (status === 404 || lower.includes('model_not_found') || lower.includes('does not exist')) {
+  if (
+    status === 404 ||
+    status === 410 ||
+    lower.includes('model_not_found') ||
+    lower.includes('does not exist') ||
+    lower.includes('decommissioned') ||
+    lower.includes('retired')
+  ) {
     return new ProviderExecutionError({
       providerId,
       errorClass: 'MODEL_UNSUPPORTED',
       statusCode: status,
-      message: `${providerId} reported unsupported or unavailable model (${status}): ${clean}`,
+      message: `${providerId} reported unsupported or retired model (${status}): ${clean}`,
       retryable: false,
-      allowFallback: false,
+      allowFallback: true,
     });
   }
 
@@ -131,6 +138,9 @@ function classifyThrownError(providerId: AiProviderId, err: unknown): ProviderEx
   }
   if (lower.includes('503') || lower.includes('unavailable') || lower.includes('high demand') || lower.includes('econnreset')) {
     return classifyHttpFailure(providerId, 503, raw);
+  }
+  if (lower.includes('404') || lower.includes('410') || lower.includes('model_not_found') || lower.includes('decommissioned')) {
+    return classifyHttpFailure(providerId, lower.includes('410') ? 410 : 404, raw);
   }
   if (lower.includes('400') || lower.includes('invalid argument')) {
     return classifyHttpFailure(providerId, 400, raw);
@@ -274,15 +284,25 @@ export const geminiAdapter: AiProviderAdapter = {
     const start = Date.now();
     try {
       const contents = opts.systemPrompt ? `${opts.systemPrompt}\n\n${opts.prompt}` : opts.prompt;
+      const streamConfig: Record<string, unknown> = {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        maxOutputTokens: opts.maxOutputTokens,
+      };
+      if (typeof opts.temperature === 'number') {
+        streamConfig.temperature = opts.temperature;
+      }
+      if (opts.responseFormat === 'json') {
+        streamConfig.responseMimeType = 'application/json';
+        if (opts.geminiJsonSchema) {
+          streamConfig.responseSchema = opts.geminiJsonSchema;
+        }
+      }
+
       const streamResp = await withTimeoutRace(
         ai.models.generateContentStream({
           model: opts.model.id,
           contents,
-          config: {
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            maxOutputTokens: opts.maxOutputTokens,
-            ...(typeof opts.temperature === 'number' ? { temperature: opts.temperature } : {}),
-          },
+          config: streamConfig,
         }),
         opts.timeoutMs,
         'gemini'
@@ -327,7 +347,7 @@ export const geminiAdapter: AiProviderAdapter = {
     const res = await geminiAdapter.generate({
       model,
       prompt: 'Reply strictly with: OK',
-      maxOutputTokens: 16,
+      maxOutputTokens: 256,
       timeoutMs,
       responseFormat: 'text',
     });
@@ -547,7 +567,7 @@ export const groqAdapter: AiProviderAdapter = {
     const res = await groqAdapter.generate({
       model,
       prompt: 'Reply strictly with: OK',
-      maxOutputTokens: 16,
+      maxOutputTokens: 256,
       timeoutMs,
       responseFormat: 'text',
     });
@@ -617,7 +637,7 @@ export const openRouterAdapter: AiProviderAdapter = {
     const res = await openRouterAdapter.generate({
       model,
       prompt: 'Reply strictly with: OK',
-      maxOutputTokens: 16,
+      maxOutputTokens: 256,
       timeoutMs,
       responseFormat: 'text',
     });
@@ -684,7 +704,7 @@ export const cloudflareAdapter: AiProviderAdapter = {
     const res = await cloudflareAdapter.generate({
       model,
       prompt: 'Reply strictly with: OK',
-      maxOutputTokens: 16,
+      maxOutputTokens: 256,
       timeoutMs,
       responseFormat: 'text',
     });

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
+import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -9,8 +10,17 @@ import { registerVideoTranscoder } from './server/videoTranscoder';
 import { registerMarketingIntelligence } from './server/marketingIntelligence';
 import { registerAiProviderRoutes } from './server/aiProviders/routes';
 import { registerSalesIntelligence } from './server/salesIntelligence';
+import { registerVideoStudio } from './server/videoStudio';
+import { registerSupabaseSystemRoutes } from './server/supabase/migrateFromLegacy';
 import { executeAiTask, getProvidersDashboardSnapshot } from './server/aiProviders/providerManager';
+import { requireServerOperator } from './server/aiProviders/authMiddleware';
+import {
+  checkQuotaAndAvailability,
+  recordProviderError,
+  recordProviderSuccess,
+} from './server/aiProviders/quotaStore';
 import { ProviderExecutionError } from './server/aiProviders/types';
+import { aiGenerationLimiter } from './server/rateLimiters';
 
 function resolveServerPort(): number {
   const portArgIdx = process.argv.indexOf('--port');
@@ -85,17 +95,41 @@ function handleAiError(res: Response, err: unknown) {
 
 async function createApp() {
   const app = express();
-  app.use(
-    express.json({
-      limit: '80mb',
-      verify: (req, _res, buf) => {
-        const webhookReq = req as WebhookRawBodyRequest;
-        if (webhookReq.originalUrl?.startsWith('/api/webhooks/')) {
-          webhookReq.rawBody = buf;
-        }
-      },
-    })
-  );
+  app.set('trust proxy', 1);
+  const httpServer = http.createServer(app);
+
+  const largeUploadJson = express.json({ limit: '80mb' });
+  const transcribeJson = express.json({ limit: '16mb' });
+  const standardJson = express.json({
+    limit: '1mb',
+    verify: (req, _res, buf) => {
+      const webhookReq = req as WebhookRawBodyRequest;
+      if (webhookReq.originalUrl?.startsWith('/api/webhooks/')) {
+        webhookReq.rawBody = buf;
+      }
+    },
+  });
+
+  // Scoped JSON payload limits: 80mb strictly for direct media upload/scheduling; 1mb default everywhere else
+  app.use((req, res, next) => {
+    if (
+      req.path === '/api/publish/now' ||
+      req.path.startsWith('/api/scheduled-jobs')
+    ) {
+      return largeUploadJson(req, res, next);
+    }
+    if (req.path === '/api/ai/transcribe-audio') {
+      return transcribeJson(req, res, next);
+    }
+    if (
+      req.path === '/api/video/transcode-mp4' ||
+      req.path.startsWith('/api/video-studio')
+    ) {
+      // /api/video/transcode-mp4 parses binary via express.raw(), video-studio uses its 4mb parser
+      return next();
+    }
+    return standardJson(req, res, next);
+  });
 
   registerSocialIntegrations(app);
   registerInstagramWebhook(app);
@@ -103,6 +137,10 @@ async function createApp() {
   registerMarketingIntelligence(app);
   registerAiProviderRoutes(app);
   registerSalesIntelligence(app);
+  registerVideoStudio(app);
+  registerSupabaseSystemRoutes(app);
+
+  const behindReleaseAuth = requireServerOperator('ws-behind-the-release');
 
   app.get('/api/health', (_req: Request, res: Response) => {
     const ai = getAiClient();
@@ -120,7 +158,7 @@ async function createApp() {
   });
 
   // 1. Content-First Carousel Structuring
-  app.post('/api/ai/carousel-structure', async (req: Request, res: Response) => {
+  app.post('/api/ai/carousel-structure', behindReleaseAuth, aiGenerationLimiter, async (req: Request, res: Response) => {
 
     const { content, slideCount, designInstructions, workspaceName, brandVoice } = req.body as {
       content: string;
@@ -204,7 +242,7 @@ Return JSON with keys: projectTitle, suggestedCaption, hashtags (string array), 
   });
 
   // 2. Topic-First Carousel Generation
-  app.post('/api/ai/carousel-topic', async (req: Request, res: Response) => {
+  app.post('/api/ai/carousel-topic', behindReleaseAuth, aiGenerationLimiter, async (req: Request, res: Response) => {
     const {
       topic,
       audience,
@@ -304,7 +342,7 @@ Return JSON with keys: projectTitle, suggestedCaption, hashtags (string array), 
   });
 
   // 3. Single Slide Design/Copy Regeneration
-  app.post('/api/ai/carousel-slide-regen', async (req: Request, res: Response) => {
+  app.post('/api/ai/carousel-slide-regen', behindReleaseAuth, aiGenerationLimiter, async (req: Request, res: Response) => {
     const { slide, instruction, workspaceName, themeName } = req.body as {
       slide: { kicker?: string; headline: string; body: string; highlight?: string; layoutVariant?: string };
       instruction?: string;
@@ -350,7 +388,7 @@ Return JSON { kicker, headline, body, highlight, layoutVariant } choosing layout
   });
 
   // 4. Reels & Shorts Script + Storyboard + Editing Intelligence Plan
-  app.post('/api/ai/reels-plan', async (req: Request, res: Response) => {
+  app.post('/api/ai/reels-plan', behindReleaseAuth, aiGenerationLimiter, async (req: Request, res: Response) => {
     const {
       topic,
       existingScript,
@@ -466,7 +504,7 @@ Return JSON { projectTitle, hookLine, fullScript, musicDirection, closingCta, ed
   });
 
   // 5. AI Content Assistant (Social Hub Copy, Hooks, Hashtags, Press Notes)
-  app.post('/api/ai/social-copy', async (req: Request, res: Response) => {
+  app.post('/api/ai/social-copy', behindReleaseAuth, aiGenerationLimiter, async (req: Request, res: Response) => {
     const { prompt, format, platform, workspaceName, brandVoice } = req.body as {
       prompt: string;
       format: string;
@@ -527,8 +565,8 @@ Return JSON { headline, caption, hooks (string array), hashtags (string array), 
     }
   });
 
-  // 6. Optional Audio Transcription for Reels Subtitles
-  app.post('/api/ai/transcribe-audio', async (req: Request, res: Response) => {
+  // 6. Optional Audio Transcription for Reels Subtitles (quota-tracked)
+  app.post('/api/ai/transcribe-audio', behindReleaseAuth, aiGenerationLimiter, async (req: Request, res: Response) => {
     const ai = getAiClient();
     if (!ai) {
       return res.status(503).json({
@@ -537,11 +575,21 @@ Return JSON { headline, caption, hooks (string array), hashtags (string array), 
       });
     }
 
+    const quota = checkQuotaAndAvailability('ws-behind-the-release', 'gemini');
+    if (!quota.ok) {
+      return res.status(429).json({
+        error: quota.reason || 'Gemini quota budget reached for Behind The Release.',
+        code: 'BUDGET_EXHAUSTED',
+        quotaExceeded: true,
+      });
+    }
+
     const { base64Audio, mimeType } = req.body as { base64Audio: string; mimeType: string };
     if (!base64Audio) {
       return res.status(400).json({ error: 'Audio payload is required.' });
     }
 
+    const startedAt = Date.now();
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3.5-transcribe',
@@ -560,8 +608,27 @@ Return JSON { headline, caption, hooks (string array), hashtags (string array), 
         },
       });
 
-      return res.json({ transcript: (response.text || '').trim() });
+      const transcript = (response.text || '').trim();
+      const inputTokens = Math.max(40, Math.round(base64Audio.length / 1000));
+      const outputTokens = Math.ceil(transcript.length / 4);
+      recordProviderSuccess({
+        workspaceId: 'ws-behind-the-release',
+        providerId: 'gemini',
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        latencyMs: Date.now() - startedAt,
+      });
+
+      return res.json({ transcript });
     } catch (err) {
+      recordProviderError({
+        workspaceId: 'ws-behind-the-release',
+        providerId: 'gemini',
+        taskType: 'audio-transcribe',
+        errorClass: 'UPSTREAM_ERROR',
+        message: err instanceof Error ? err.message : String(err),
+      });
       return handleAiError(res, err);
     }
   });
@@ -569,10 +636,13 @@ Return JSON { headline, caption, hooks (string array), hashtags (string array), 
   // Vite dev middleware vs static production serving
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
+        allowedHosts: true,
+        hmr: hmrDisabled ? false : { server: httpServer },
+        ...(hmrDisabled ? { ws: { server: httpServer } } : {}),
       },
       appType: 'spa',
     });
@@ -581,13 +651,16 @@ Return JSON { headline, caption, hooks (string array), hashtags (string array), 
     const distPath = path.resolve(process.cwd(), 'dist');
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
-      app.get('*', (_req: Request, res: Response) => {
-        res.sendFile(path.join(distPath, 'index.html'));
+      app.get('*', (req: Request, res: Response, next) => {
+        if (req.path.startsWith('/api/')) {
+          return next();
+        }
+        return res.sendFile(path.join(distPath, 'index.html'));
       });
     }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`74 STUDIO SOCIAL HUB server listening on http://0.0.0.0:${PORT}`);
   });
 }

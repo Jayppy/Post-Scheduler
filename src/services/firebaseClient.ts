@@ -14,11 +14,12 @@ import {
   getDoc,
   getDocFromServer,
   getDocs,
-  getFirestore,
+  initializeFirestore,
   onSnapshot,
   query,
   serverTimestamp,
   setDoc,
+  setLogLevel,
   updateDoc,
   where,
   type Unsubscribe,
@@ -43,10 +44,13 @@ import type {
   SalesOutputRecord,
 } from '../types/sales';
 
+// Silence internal Firestore SDK WebChannel stream retry notices
+setLogLevel('silent');
+
 const app = initializeApp(firebaseConfig);
 export const db = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+  ? initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, firebaseConfig.firestoreDatabaseId)
+  : initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
 export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -107,9 +111,7 @@ export async function testConnection(): Promise<void> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
+    console.info('Firestore backend check: operating in offline or Supabase-primary mode.', error instanceof Error ? error.message : '');
   }
 }
 
@@ -160,7 +162,7 @@ export async function ensureUserProfileDoc(user: User): Promise<void> {
       await updateDoc(ref, payload);
     }
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    console.info('Firestore profile sync bypassed (Supabase-primary mode):', error instanceof Error ? error.message : '');
   }
 }
 
@@ -443,7 +445,9 @@ export function subscribeWorkspaceCloudData(
         }));
         callbacks.onConnections(items);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, connPath)
+      (error) => {
+        console.warn(`Firestore snapshot listener for ${connPath} paused:`, error instanceof Error ? error.message : String(error));
+      }
     )
   );
 
@@ -514,7 +518,9 @@ export function subscribeWorkspaceCloudData(
         });
         callbacks.onJobs(items);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, jobsPath)
+      (error) => {
+        console.warn(`Firestore snapshot listener for ${jobsPath} paused:`, error instanceof Error ? error.message : String(error));
+      }
     )
   );
 
@@ -546,7 +552,9 @@ export function subscribeWorkspaceCloudData(
         });
         callbacks.onHistory(items);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, histPath)
+      (error) => {
+        console.warn(`Firestore snapshot listener for ${histPath} paused:`, error instanceof Error ? error.message : String(error));
+      }
     )
   );
 

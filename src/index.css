@@ -14,6 +14,9 @@
     font-family: var(--font-sans);
     background-color: #09090b;
     color: #f4f4f5;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, .font-display {

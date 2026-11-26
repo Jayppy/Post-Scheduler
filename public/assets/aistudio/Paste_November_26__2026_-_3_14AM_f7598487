@@ -1,0 +1,973 @@
+# MASTER IMPLEMENTATION PROMPT — 74 STUDIO SALES INTELLIGENCE REDESIGN + SUPABASE MIGRATION + FULL APPLICATION REPAIR
+
+You are working on my existing application. I want you to make a controlled, production-quality improvement to the current application.
+
+This is an existing application with working features and existing data. Do not rebuild it from scratch, introduce unnecessary dashboards, or damage existing functionality.
+
+There are five objectives:
+
+1. Simplify 74 STUDIO Sales Intelligence into a chat-first artist response assistant.
+2. Implement my new Discord-style conversation and 10% promotional rules.
+3. Migrate application data and file storage to Supabase while preserving Firebase Authentication, Instagram and YouTube integrations.
+4. Fix all outstanding technical problems identified in the previous application audit and previous implementation request.
+5. Run a comprehensive verification of the entire application before deployment.
+
+---
+
+# PART 1 — REDESIGN 74 STUDIO SALES INTELLIGENCE
+
+## 1.1 New product direction
+
+I no longer want 74 STUDIO Sales Intelligence to function as a complicated prospecting or sales CRM platform.
+
+I want a straightforward AI chat assistant that helps me communicate with artists, producers, musicians and potential clients.
+
+Its primary job is:
+
+- I create a new conversation.
+- I paste an artist's message or describe the conversation.
+- The AI understands the context.
+- It uses my 74 STUDIO knowledge base.
+- It drafts a short, natural response.
+- I can review, edit, copy and use that response.
+- I continue the conversation in the same chat.
+- The AI remembers the conversation history and guides the interaction naturally.
+- When the artist shows genuine buying interest, the AI helps move the conversation towards a project enquiry or booking.
+
+This must feel like using a simple AI messaging assistant, not managing a sales department.
+
+## 1.2 Remove unnecessary prospecting features
+
+Remove or hide the following from the active 74 STUDIO Sales Intelligence interface:
+
+- Lead prospecting dashboards.
+- Automated lead discovery.
+- Social media scraping and prospect harvesting.
+- Lead scoring dashboards.
+- Complicated sales pipeline management.
+- Campaign management screens.
+- Bulk outreach systems.
+- Prospect analytics dashboards.
+- Unnecessary service-match dashboards.
+- Strategy evaluator dashboards.
+- Other complicated prospecting tools that do not directly help me respond to an artist.
+
+Do not introduce replacements for these features.
+
+IMPORTANT DATA PRESERVATION RULE:
+
+Do not permanently delete existing leads, research, conversations, proposals, activity history or other historical records merely because their interfaces are being removed.
+
+Preserve existing data in Supabase. Archive or hide prospecting-only functionality from the active interface.
+
+Do not modify the separate Behind The Release social publishing workspace or its Marketing Content Studio.
+
+## 1.3 Required interface
+
+Create a clean, minimal, professional chat interface.
+
+The main interface should contain:
+
+**A. Sidebar**
+- New Chat button.
+- Conversation history.
+- Search previous conversations.
+- Rename conversation.
+- Delete conversation with confirmation.
+- Clear indication of the currently selected conversation.
+
+**B. Main conversation area**
+- Conversation title.
+- Chat history.
+- Artist message input.
+- AI response generation.
+- Clear loading and error states.
+- Copy response button.
+- Regenerate response button.
+- Edit response before copying.
+- Continue conversation.
+
+**C. Simple knowledge base access**
+
+Keep the existing 74 STUDIO Knowledge Base functionality.
+
+I need to be able to:
+- View existing knowledge entries.
+- Add a new knowledge entry.
+- Edit an existing entry.
+- Delete an entry with confirmation.
+- Search knowledge entries.
+
+Do not create a separate knowledge analytics dashboard.
+
+The AI must automatically use the active 74 STUDIO knowledge base when generating every response.
+
+**D. Minimal settings**
+
+Only include settings genuinely needed for the chat assistant, such as:
+- Response style.
+- Promotional offer configuration.
+- Knowledge base access.
+- Conversation preferences.
+
+Do not create additional dashboards or unnecessary navigation sections.
+
+## 1.4 Conversation persistence
+
+Every chat must be saved in Supabase.
+
+Persist:
+- Conversation ID.
+- Conversation title.
+- User ID.
+- Workspace ID.
+- Messages.
+- Message roles.
+- Message timestamps.
+- Generated responses.
+- Conversation metadata.
+
+When I refresh the browser, the current conversation must remain open.
+
+When I leave the application and return later, the conversation history must remain available.
+
+When I open a previous conversation, the full conversation context must be restored.
+
+Do not lose messages after refresh, sign-in, browser restart or server restart.
+
+---
+
+# PART 2 — NEW 74 STUDIO CONVERSATION STYLE
+
+This is one of the most important requirements.
+
+## 2.1 Discord-style communication
+
+EVERY ARTIST-FACING RESPONSE GENERATED BY 74 STUDIO SALES INTELLIGENCE MUST USE:
+
+- Lowercase writing.
+- Natural Discord-style messaging.
+- Casual, friendly, relaxed conversation.
+- The tone of two people chatting naturally about music.
+- Short, direct sentences.
+- Simple everyday vocabulary.
+- A confident but non-pushy approach.
+- Minimal punctuation where natural.
+- No unnecessary formal introductions.
+- No corporate marketing language.
+- No lengthy explanations.
+- No unnecessary headings or bullet points in ordinary artist replies.
+- No robotic expressions.
+- No exaggerated enthusiasm.
+- No excessive emojis.
+
+The reply should feel like a knowledgeable creative person chatting with another person in a Discord server.
+
+Example of the intended style:
+
+"yeah, that sounds like something we could build around. the atmosphere of the track would work really well with a cinematic visual direction. are you thinking more of a short teaser or a full visualizer?"
+
+Another example:
+
+"oh nice, do you already have a visual concept in mind or would you like us to develop something around the sound?"
+
+Another example:
+
+"yeah, we can work with existing footage too. if you have some studio or performance clips, we can shape them into something more polished for reels or tiktok."
+
+These examples establish the desired tone, not fixed templates.
+
+## 2.2 Strict lowercase requirement
+
+All artist-facing generated messages must be lowercase.
+
+This includes:
+- First words of sentences.
+- Service names.
+- Package names.
+- Promotional messages.
+- Follow-up messages.
+- Calls to action.
+- URLs wherever their case is not significant.
+
+Never allow the AI to switch back to formal uppercase marketing copy.
+
+This lowercase requirement applies only to the generated artist-facing messages inside 74 STUDIO Sales Intelligence.
+
+It must not affect:
+- Application navigation.
+- Knowledge base administration.
+- Technical reports.
+- Behind The Release content generation.
+- 74 STUDIO website copywriting.
+- Other application workspaces.
+
+## 2.3 Response length
+
+Keep artist replies short and precise.
+
+Default response:
+- Usually 1–3 short sentences.
+- Usually 15–55 words.
+- Only go longer when the artist explicitly asks for detailed information.
+- Never dump the entire service catalogue into one reply.
+- Never repeat information the artist already provided.
+- Never ask multiple unnecessary questions.
+
+One natural, relevant question is usually better than a long explanation.
+
+## 2.4 Conversation guidance
+
+The AI must understand the complete conversation history.
+
+It must not behave as if every new artist message is a fresh conversation.
+
+It must:
+- Remember what the artist has already said.
+- Understand the artist's current level of interest.
+- Identify the service being discussed.
+- Identify unanswered questions.
+- Avoid repeating discovery questions.
+- Avoid changing recommendations without a reason.
+- Give a natural next reply.
+- Progress the conversation without forcing a sale.
+
+Ask only the most useful missing question.
+
+Do not interrogate artists with a full project questionnaire.
+
+## 2.5 Sales awareness
+
+Apply the existing Eugene Schwartz five stages of awareness internally:
+
+1. Unaware.
+2. Problem-aware.
+3. Solution-aware.
+4. Product-aware.
+5. Most-aware.
+
+Use this to determine the appropriate conversational response.
+
+However, do not expose awareness labels, sales psychology explanations or internal analysis in the artist-facing response.
+
+The AI should simply produce a natural message appropriate to the conversation.
+
+---
+
+# PART 3 — 10% PROMOTIONAL OFFER RULE
+
+I am currently running a 10% discount promotion on ALL 74 STUDIO orders.
+
+This must be incorporated into the 74 STUDIO Sales Intelligence conversation-generation system.
+
+## 3.1 Promotional rule
+
+Whenever an artist shows genuine interest in a service, package, price, project or potential booking, naturally mention the current 10% discount.
+
+Examples of genuine buying interest:
+
+- Asking about pricing.
+- Asking about packages.
+- Asking how much a project costs.
+- Asking about booking.
+- Asking about project availability.
+- Asking about deliverables.
+- Confirming that they need a service.
+- Discussing a project they want to start.
+- Comparing options before purchasing.
+- Indicating that they want to work with 74 STUDIO.
+
+The AI must include the 10% promotional offer in every promising sales conversation, not merely in the first response.
+
+If the artist asks a follow-up question later in the same buying conversation, make sure the promotion is not forgotten.
+
+However:
+
+- Do not insert the discount into unrelated casual conversations.
+- Do not force it into every single message.
+- Do not repeatedly announce it in consecutive messages when it has already been clearly communicated and is not relevant to the current response.
+- Do not make it sound desperate or pushy.
+
+## 3.2 Example promotional wording
+
+Use natural Discord-style language.
+
+For example:
+
+"btw, we're currently running a 10% discount on all orders, so it's a pretty good time to get the visuals sorted."
+
+Or:
+
+"also, we've got 10% off all orders at the moment, so that applies to this project too."
+
+Generate variations naturally instead of repeating the same sentence.
+
+## 3.3 Discount calculations and price integrity
+
+The promotion applies to all orders, including custom-quote services.
+
+Rules:
+- Never invent an expiration date.
+- Never invent a coupon code.
+- Never invent additional promotion conditions.
+- Never claim that the promotion is ending soon.
+- Never create artificial urgency.
+- Do not change the official base prices in the knowledge base.
+- Preserve the "+" on all starting prices.
+- For custom projects, explain that the 10% discount applies to the confirmed order quote.
+- Only calculate a discounted amount when the underlying price and applicable scope are sufficiently clear.
+- Clearly distinguish starting prices from final quotes.
+
+Make the promotion configurable in a small settings section so I can update or deactivate it later without changing the AI system prompt.
+
+Initial settings:
+- Promotion status: Active.
+- Discount: 10%.
+- Scope: All orders.
+- Expiration: Not specified.
+- Coupon code: None specified.
+
+---
+
+# PART 4 — PRESERVE AND USE THE 74 STUDIO KNOWLEDGE BASE
+
+Use the existing knowledge base as the authoritative source.
+
+Do not replace it with generic marketing knowledge.
+
+Preserve all existing entries and allow the AI to retrieve relevant information based on the artist's message.
+
+Important service and pricing facts:
+
+## AI Music Videos
+- Spark: $29, up to 10 seconds.
+- Hook: $49, up to 20 seconds.
+- Full Frame: $99+, up to 45 seconds.
+
+## 2D Animation
+- Teaser: $69, up to 20 seconds.
+- Visualizer: $199+, up to 60 seconds.
+- Full Video: $349+, up to 60 seconds.
+
+## 3D Music Videos
+- Teaser: $149, up to 20 seconds.
+- Visualizer: $249+, up to 60 seconds.
+- Full Video: $449+, up to 60 seconds.
+
+## Lyric Videos
+- 30 SEC: $50, up to 30 seconds.
+- Full Lyric Video: $250, full song.
+
+## Human-Designed Cover Artwork
+- Custom Quote Required.
+- Strictly non-AI.
+- Never describe this service as AI-generated.
+
+## Complete Single Release Promo Content
+Includes:
+1. Human-designed non-AI cover artwork.
+2. Professionally produced music video.
+3. Short promotional visualizer.
+
+Pricing: Custom Quote Required.
+
+Only recommend this bundle when the artist needs all three coordinated deliverables.
+
+## Short-Form Video Editing
+- Custom Quote Required.
+- Best suited to artists with existing raw studio, performance or other footage.
+
+## UGC and Product Advertisements
+- Custom Quote Required.
+- Primarily relevant to brands and businesses.
+- Do not automatically pitch this to musician enquiries.
+
+All prices are in USD.
+
+Starting prices must retain their plus signs.
+
+Never invent pricing, delivery times, portfolio results, testimonials, client names, guarantees or services.
+
+For additional characters, environments, extended runtimes or unusual project requirements, explain that a custom quote is needed.
+
+When the artist is ready, guide them towards:
+
+https://74-studio.com/contact
+
+Do not claim that a booking, inquiry or quote has already been submitted.
+
+---
+
+# PART 5 — SUPABASE MIGRATION
+
+Supabase is now the selected primary database and storage platform for the entire application.
+
+Migrate the application's data and files to Supabase without losing existing information.
+
+## 5.1 Retain Firebase Authentication
+
+Firebase Authentication must remain the existing authentication provider.
+
+Do not replace it with Supabase Auth.
+
+Configure the Supabase integration to trust the correct Firebase project.
+
+Requirements:
+- Existing Firebase users must retain their identities.
+- Preserve existing Firebase UIDs.
+- Store Firebase UID values as text.
+- Verify Firebase ID tokens correctly.
+- Implement appropriate Supabase Row Level Security policies.
+- Use the Firebase JWT subject claim for ownership policies where appropriate.
+- Prevent unauthenticated access.
+- Remove the insecure production local-operator fallback.
+- Ensure backend routes enforce authentication.
+
+Do not force existing users to create new accounts.
+
+## 5.2 Migrate all existing data
+
+Inspect every data source before migration.
+
+Include:
+- Firestore collections and documents.
+- `.data/*.json` authoritative runtime stores.
+- AI Provider Manager configuration.
+- AI quota counters.
+- Provider cooldowns.
+- Sales Intelligence records.
+- Existing conversations and history.
+- Behind The Release data.
+- Social publishing records.
+- Marketing Content Studio records.
+- Long-form generation manifests.
+- Completed generation sections.
+- Checkpoints and error history.
+- User and workspace settings.
+- Existing media and uploaded files.
+
+Preserve:
+- Existing IDs.
+- Firebase UIDs.
+- Workspace IDs.
+- Timestamps.
+- Relationships.
+- Ownership.
+- Historical records.
+- Existing encrypted credentials.
+
+Do not migrate only Firestore mirrors while ignoring authoritative JSON runtime data.
+
+## 5.3 Proposed database structure
+
+Create an appropriately normalised PostgreSQL schema for:
+
+- Users.
+- Workspaces.
+- Workspace settings.
+- Sales conversations.
+- Conversation messages.
+- Knowledge base entries.
+- Social accounts.
+- Encrypted OAuth credentials.
+- Social posts and publishing jobs.
+- Marketing profiles.
+- Research sources.
+- Marketing drafts.
+- Leads and archived sales records.
+- Sales activity history.
+- AI provider configurations.
+- Model registry.
+- AI usage accounting.
+- Daily quota counters.
+- Provider cooldowns.
+- Generation jobs.
+- Generation sections.
+- Generation checkpoints.
+- File metadata.
+
+Use proper foreign keys, indexes, timestamps, ownership fields and constraints.
+
+Preserve the existing workspace IDs, including:
+- `ws-behind-the-release`
+- The existing 74 STUDIO Sales Intelligence workspace ID.
+
+Do not invent a new workspace ID if one already exists.
+
+## 5.4 File storage
+
+Use Supabase Storage for uploaded and generated assets.
+
+Create appropriate buckets for:
+- Social media assets.
+- Marketing assets.
+- Sales attachments.
+- Generated content.
+- User uploads.
+
+Preserve existing file references and metadata.
+
+Do not put large video or audio files directly into PostgreSQL.
+
+## 5.5 Security
+
+- Enable RLS on exposed tables.
+- Ensure workspace and user isolation.
+- Keep Supabase secret keys on the backend only.
+- Never expose service-role or secret keys in frontend code.
+- Preserve encryption for Instagram and YouTube credentials.
+- Keep encryption keys in server-side secrets.
+- Never log OAuth tokens or provider API keys.
+- Validate backend request payloads.
+- Implement proper file upload limits and access controls.
+
+## 5.6 Migration safety
+
+Use a staged migration.
+
+1. Back up all existing data.
+2. Inspect and inventory existing sources.
+3. Create Supabase schema.
+4. Configure Firebase JWT trust and RLS.
+5. Import data into a staging environment.
+6. Verify record counts and relationships.
+7. Migrate files and verify references.
+8. Test reads and writes.
+9. Switch application data access.
+10. Perform controlled production cutover.
+11. Keep the old sources untouched until verification and recovery requirements are met.
+
+The migration importer must be idempotent.
+
+Do not create permanent uncontrolled dual writes.
+
+Provide a tested rollback procedure.
+
+Do not delete Firebase or Firestore resources as part of this migration.
+
+---
+
+# PART 6 — FIX THE PREVIOUS TECHNICAL AUDIT FINDINGS
+
+The previous audit identified critical problems. They must be addressed rather than ignored.
+
+## 6.1 AI model registry and provider fallback
+
+Inspect and fix deprecated or unavailable model identifiers.
+
+Do not assume previous model recommendations are still valid.
+
+Verify current model availability through the providers' live model catalogues and official documentation.
+
+Requirements:
+- Remove retired model identifiers.
+- Filter out incompatible model types.
+- Do not allow audio or image models into text-generation task lists.
+- Correct OpenRouter catalogue ingestion.
+- Handle model-not-found errors appropriately.
+- Allow eligible 404 model-not-found errors to trigger a safe fallback where the configured model is genuinely unavailable.
+- Do not fall back on invalid credentials or permission errors.
+- Keep paid models disabled unless explicitly authorised.
+
+Keep:
+- Gemini as primary provider.
+- Groq as fallback.
+- OpenRouter as secondary fallback.
+- Cloudflare Workers AI for suitable lightweight tasks.
+
+Keep Gemini Search grounding and audio transcription restricted to Gemini unless a separately verified implementation is approved.
+
+## 6.2 Provider fallback rules
+
+Fallback should be limited to appropriate transient failures, such as:
+- 429.
+- 502.
+- 503.
+- 504.
+- Timeout.
+- Confirmed unavailable model errors.
+
+Do not hide:
+- 400 invalid requests.
+- 401 authentication errors.
+- 403 permission errors.
+- Invalid configurations.
+
+Ensure fallback does not cause duplicate generation or uncontrolled token consumption.
+
+## 6.3 Quota and usage accounting
+
+Persist all quota and usage data in Supabase.
+
+Ensure:
+- Usage survives server restarts.
+- Cooldowns survive server restarts.
+- Quota enforcement is concurrency-safe.
+- Usage is isolated by workspace and provider.
+- Partial usage from failed calls is accounted for where provider usage data is available.
+- Grounded research is included in quota accounting.
+- Test-provider calls do not fabricate actual usage records.
+
+Do not allow a provider failure to corrupt the usage ledger.
+
+## 6.4 Authentication and backend security
+
+Fix the previous authentication weaknesses.
+
+Requirements:
+- No unauthenticated production access.
+- Remove the default local-operator fallback in production.
+- Protect all `/api/ai/*` endpoints.
+- Ensure frontend AI requests include the required Firebase authentication.
+- Verify tokens on the backend.
+- Enforce workspace ownership.
+- Validate all request bodies.
+- Apply appropriate payload size limits.
+- Avoid the previous global 80MB JSON parser affecting smaller API route limits.
+- Do not expose secrets.
+
+## 6.5 Long-form generation reliability
+
+Persist generation progress to Supabase as generation proceeds.
+
+Do not wait until the entire generation finishes before saving sections.
+
+Requirements:
+- Save each completed section.
+- Save the generation manifest.
+- Save checkpoints.
+- Record failures.
+- Track partial token usage where available.
+- Resume from the last successful checkpoint.
+- Avoid generating duplicate sections.
+- Preserve already completed sections after disconnects, refreshes or server restarts.
+
+## 6.6 JSON schema and streaming
+
+Fix the Gemini streaming adapter's missing JSON schema response configuration where required.
+
+Ensure:
+- Structured responses follow their declared schema.
+- Streaming does not break structured output.
+- Errors are handled clearly.
+- Incomplete generation is detectable.
+- The frontend does not treat partial output as completed output.
+
+---
+
+# PART 7 — PAGE REFRESH AND NAVIGATION PERSISTENCE
+
+The application currently returns to the default page whenever I refresh it.
+
+Fix this.
+
+Requirements:
+- Preserve the current URL and route on refresh.
+- Preserve the current workspace.
+- Preserve the selected conversation.
+- Preserve the active subpage.
+- Preserve relevant filters and navigation state.
+- Support direct links to valid pages.
+- Browser back and forward must work.
+- Unknown or invalid routes should have a clear fallback.
+- Do not always redirect to the default homepage after refresh.
+- Ensure route state is restored after sign-in where appropriate.
+
+The selected 74 STUDIO chat must remain selected after refresh.
+
+---
+
+# PART 8 — INSTAGRAM AND YOUTUBE CONNECTION PERSISTENCE
+
+The existing Instagram and YouTube connections are important.
+
+Preserve them during the Supabase migration.
+
+Inspect and verify the complete OAuth lifecycle.
+
+Requirements:
+- Preserve existing OAuth client IDs and configuration.
+- Preserve callback URLs.
+- Preserve permissions and scopes.
+- Preserve account and channel metadata.
+- Preserve encrypted access and refresh credentials.
+- Preserve token expiry metadata.
+- Implement correct refresh-token handling.
+- Restore connection status after browser refresh.
+- Restore connection status after signing out and signing in again.
+- Maintain connection persistence after the application has been closed for some time.
+- Handle revoked credentials properly.
+- Do not display a false connected status when the token is invalid.
+- Do not force reconnection if the existing credentials are still valid.
+
+Test token refresh safely without exposing secrets.
+
+Do not publish real public posts during tests.
+
+If credentials are invalid or revoked, provide a clear reconnect flow.
+
+Do not claim that connections are verified merely because account metadata exists.
+
+---
+
+# PART 9 — INSTALLABLE MOBILE APP / PWA
+
+I want users to be able to install the application on their phones.
+
+Implement a proper Progressive Web App.
+
+Requirements:
+- Valid web app manifest.
+- Correct application name.
+- App icons in appropriate sizes.
+- Theme and background colours matching the existing design.
+- Service worker.
+- Appropriate caching.
+- Offline fallback.
+- Mobile-responsive interface.
+- Installability on supported Android browsers.
+- Installability through Safari's Add to Home Screen process on iPhone.
+
+Do not cache sensitive user records, OAuth tokens, API responses or private chat content in an unsafe way.
+
+Do not make the app appear installed if it does not meet actual PWA installation requirements.
+
+Test:
+- Android layout.
+- iPhone layout.
+- Desktop layout.
+- Installation behaviour.
+- App launch.
+- Authentication after installation.
+- Network failure behaviour.
+- Updating the application.
+
+Preserve the existing visual identity. Do not redesign the entire application.
+
+---
+
+# PART 10 — KEEP BEHIND THE RELEASE FUNCTIONALITY
+
+The existing Behind The Release workspace must remain intact.
+
+Preserve:
+- Instagram connection.
+- YouTube connection.
+- Social scheduler.
+- Content creation.
+- Existing post records.
+- Marketing Content Studio.
+- Research functionality.
+- Existing publishing workflows.
+- Current workspace identity.
+
+Do not introduce the 74 STUDIO Discord-style lowercase messaging rule into Behind The Release.
+
+Do not change Behind The Release content-generation styles.
+
+Do not add 74 STUDIO social publishing controls back into the scheduler.
+
+Keep manual publishing behaviour as currently implemented.
+
+---
+
+# PART 11 — FULL END-TO-END TESTING
+
+After implementation, perform a comprehensive verification.
+
+Do not rely solely on mocked tests.
+
+## A. 74 STUDIO chat tests
+
+Test:
+- Create new chat.
+- Send artist message.
+- Generate a response.
+- Continue conversation.
+- Preserve history.
+- Reload page.
+- Open previous conversation.
+- Rename conversation.
+- Copy response.
+- Regenerate response.
+- Delete conversation.
+- Retrieve knowledge base information.
+
+Check that all generated artist-facing responses:
+- Are lowercase.
+- Sound natural.
+- Are concise.
+- Use Discord-style conversation.
+- Respect existing conversation context.
+- Use accurate service information.
+- Include the 10% discount when genuine buying interest exists.
+- Do not invent prices or guarantees.
+
+## B. Sales accuracy tests
+
+Test different artist scenarios:
+- Artist asking for AI visuals.
+- Artist asking for 2D animation.
+- Artist asking for 3D visuals.
+- Artist asking for lyric videos.
+- Artist asking for cover artwork.
+- Artist asking for short-form editing using existing footage.
+- Artist interested in a complete release package.
+- Artist asking about pricing.
+- Artist with a limited budget.
+- Artist who is unsure what they need.
+- Artist who is ready to book.
+- Artist who has already answered discovery questions.
+
+Check that the AI recommends appropriate services rather than automatically pitching expensive packages.
+
+## C. Supabase tests
+
+Verify:
+- Database connectivity.
+- Authentication.
+- RLS policies.
+- User isolation.
+- Workspace isolation.
+- CRUD operations.
+- Conversation persistence.
+- Knowledge base persistence.
+- File uploads and downloads.
+- Data relationships.
+- Quota persistence.
+- Checkpoint persistence.
+- Recovery procedure.
+
+## D. Provider tests
+
+Perform live tests for:
+- Gemini.
+- Groq.
+- OpenRouter.
+- Cloudflare Workers AI.
+
+Verify:
+- Authentication.
+- Actual model availability.
+- Text generation.
+- Streaming.
+- Structured JSON output where supported.
+- Usage accounting.
+- Fallback behaviour.
+- Rate-limit behaviour.
+- Provider failure behaviour.
+- Quota enforcement.
+
+Do not claim a live test passed if the credentials or service were unavailable.
+
+## E. Instagram and YouTube tests
+
+Verify:
+- Existing connection restoration.
+- OAuth state handling.
+- Token refresh.
+- Account metadata.
+- Authentication after refresh.
+- Authentication after sign-in.
+- Publishing workflow validation without sending public content.
+
+## F. Navigation and PWA tests
+
+Verify:
+- Refresh persistence.
+- Direct URLs.
+- Back and forward navigation.
+- Conversation restoration.
+- Mobile responsiveness.
+- PWA manifest.
+- Service worker.
+- Installation.
+- Offline fallback.
+
+## G. Regression tests
+
+Verify that Behind The Release has not been broken.
+
+Verify that removing prospecting features has not deleted historical records.
+
+Verify that existing AI provider functionality has not been broken.
+
+Verify that the new Supabase architecture is the actual authoritative data layer, not just a database connection that is never used.
+
+---
+
+# PART 12 — IMPLEMENTATION AND DEPLOYMENT RULES
+
+Work in controlled phases.
+
+First inspect the existing codebase and map the required changes.
+
+Then implement the work in logical phases:
+
+1. Architecture and data inventory.
+2. Supabase configuration and secure schema.
+3. Data migration tooling and verification.
+4. Supabase backend integration.
+5. 74 STUDIO chat redesign.
+6. Discord-style response engine and promotion rules.
+7. Provider registry, quota and fallback repairs.
+8. Authentication and OAuth preservation.
+9. Navigation persistence.
+10. PWA implementation.
+11. Full end-to-end testing.
+
+Do not mix unrelated changes into a single unreviewable code modification.
+
+Keep existing secrets in their secure environment.
+
+Do not ask me to paste API keys, Firebase tokens, OAuth secrets or encryption keys into chat.
+
+Do not overwrite production data.
+
+Do not delete old Firestore records or old JSON backups.
+
+Do not modify live OAuth settings unnecessarily.
+
+Do not deploy to production automatically.
+
+Do not publish public social posts or send messages to real artists during testing.
+
+If a requirement cannot be verified because credentials, permissions, deployment configuration or external services are unavailable, mark it NOT VERIFIED and explain exactly what is missing.
+
+# FINAL REPORT REQUIRED
+
+At the end, provide:
+
+1. Summary of changes.
+2. Exact features removed from the active 74 STUDIO interface.
+3. Exact features retained.
+4. Supabase schema and tables created.
+5. Data sources migrated.
+6. Source and destination record counts.
+7. Data integrity results.
+8. Firebase Authentication test results.
+9. Instagram connection and token-refresh results.
+10. YouTube connection and token-refresh results.
+11. AI provider live test results.
+12. Quota and fallback test results.
+13. Long-form generation recovery results.
+14. Navigation persistence results.
+15. PWA installation results.
+16. Behind The Release regression results.
+17. Security and RLS verification results.
+18. Remaining issues.
+19. Rollback readiness.
+20. Deployment recommendation.
+
+Use only these statuses:
+
+- PASS
+- FAIL
+- NOT VERIFIED
+- NOT APPLICABLE
+
+Do not mark a feature PASS based only on code inspection or mocked tests.
+
+Do not claim that the application is production-ready unless all critical acceptance tests have actually passed.
+
+The final objective is a stable application with a simple, effective 74 STUDIO artist-chat assistant, accurate knowledge-based responses, natural Discord-style communication, the active 10% promotion, Supabase-backed persistence and all existing integrations preserved.

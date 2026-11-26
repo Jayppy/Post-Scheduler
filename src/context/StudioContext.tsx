@@ -24,6 +24,7 @@ import { prepareMediaItemsForPublish } from '../services/mediaPayload';
 import { useFirebase } from './FirebaseContext';
 import { deleteScheduledJobFromFirestore } from '../services/firebaseClient';
 import { DEFAULT_PUBLISHING_TIMEZONE, zonedDateTimeToUtcIso } from '../utils/publishing';
+import { parseAppPath, serializeAppPath } from '../utils/router';
 
 export interface ToastMessage {
   id: string;
@@ -77,6 +78,10 @@ interface StudioContextValue {
   setMarketingSubView: (sub: MarketingSubView) => void;
   salesSubView: SalesSubView;
   setSalesSubView: (sub: SalesSubView) => void;
+  salesConversationId: string | null;
+  setSalesConversationId: (id: string | null) => void;
+  activeVideoProjectId: string | null;
+  setActiveVideoProjectId: (id: string | null) => void;
 
   themes: DesignTheme[];
   workspaceThemes: DesignTheme[];
@@ -138,13 +143,30 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user, syncFromServerSnapshot } = useFirebase();
   const [workspaces, setWorkspaces] = useState<Workspace[]>(() => studioStorage.loadWorkspaces());
   const [activeWorkspaceId, setActiveWsId] = useState<string>(() => studioStorage.loadActiveWorkspaceId());
-  const [activeBusinessWorkspace, setActiveBusinessWorkspace] = useState<ActiveBusinessWorkspace>(
-    'behind-the-release'
+  const initialRoute = useMemo(
+    () =>
+      typeof window !== 'undefined'
+        ? parseAppPath(window.location.pathname)
+        : parseAppPath('/'),
+    []
   );
-  const [navSection, setNavSection] = useState<MainNavSection>('hub-overview');
-  const [studioSubView, setStudioSubView] = useState<CreativeStudioSubView>('overview');
-  const [marketingSubView, setMarketingSubView] = useState<MarketingSubView>('dashboard');
-  const [salesSubView, setSalesSubView] = useState<SalesSubView>('dashboard');
+  const [activeBusinessWorkspace, setActiveBusinessWorkspace] = useState<ActiveBusinessWorkspace>(
+    initialRoute.businessWorkspace
+  );
+  const [navSection, setNavSection] = useState<MainNavSection>(initialRoute.navSection);
+  const [studioSubView, setStudioSubView] = useState<CreativeStudioSubView>(
+    initialRoute.studioSubView
+  );
+  const [marketingSubView, setMarketingSubView] = useState<MarketingSubView>(
+    initialRoute.marketingSubView
+  );
+  const [salesSubView, setSalesSubView] = useState<SalesSubView>(initialRoute.salesSubView);
+  const [salesConversationId, setSalesConversationId] = useState<string | null>(
+    initialRoute.salesConversationId || null
+  );
+  const [activeVideoProjectId, setActiveVideoProjectId] = useState<string | null>(
+    initialRoute.videoProjectId || null
+  );
 
   const [themes, setThemes] = useState<DesignTheme[]>(() => studioStorage.loadThemes());
   const [editingPresets, setEditingPresets] = useState<EditingPreset[]>(() =>
@@ -228,11 +250,54 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setActiveBusinessWorkspace(ws);
     if (ws === '74-studio-sales') {
       setNavSection('sales-intelligence');
-      setSalesSubView('dashboard');
+      setSalesSubView('chat');
     } else {
       setNavSection((prev) => (prev === 'sales-intelligence' ? 'hub-overview' : prev));
     }
   }, []);
+
+  // Bidirectional URL <-> navigation state sync via History API (clean paths, no secrets or messages)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handlePopState = () => {
+      const parsed = parseAppPath(window.location.pathname);
+      setActiveBusinessWorkspace(parsed.businessWorkspace);
+      setNavSection(parsed.navSection);
+      setStudioSubView(parsed.studioSubView);
+      setMarketingSubView(parsed.marketingSubView);
+      setSalesSubView(parsed.salesSubView);
+      setSalesConversationId(parsed.salesConversationId || null);
+      setActiveVideoProjectId(parsed.videoProjectId || null);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const targetPath = serializeAppPath({
+      businessWorkspace: activeBusinessWorkspace,
+      navSection,
+      studioSubView,
+      marketingSubView,
+      salesSubView,
+      salesConversationId,
+      videoProjectId: activeVideoProjectId,
+    });
+    const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+    const normalizedTarget = targetPath.replace(/\/+$/, '') || '/';
+    if (currentPath !== normalizedTarget && !currentPath.startsWith('/api/')) {
+      window.history.pushState(null, '', targetPath);
+    }
+  }, [
+    activeBusinessWorkspace,
+    navSection,
+    studioSubView,
+    marketingSubView,
+    salesSubView,
+    salesConversationId,
+    activeVideoProjectId,
+  ]);
 
   const updateWorkspace = useCallback((ws: Workspace) => {
     setWorkspaces((prev) =>
@@ -586,6 +651,10 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setMarketingSubView,
         salesSubView,
         setSalesSubView,
+        salesConversationId,
+        setSalesConversationId,
+        activeVideoProjectId,
+        setActiveVideoProjectId,
         themes,
         workspaceThemes,
         saveTheme,

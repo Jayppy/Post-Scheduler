@@ -126,11 +126,19 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
+export function isProductionRuntime(): boolean {
+  if (process.env.STRICT_FIREBASE_AUTH === 'true') return true;
+  if (process.env.NODE_ENV === 'production') return true;
+  const kService = String(process.env.K_SERVICE || '').trim();
+  if (kService && !kService.startsWith('ais-dev-')) return true;
+  return false;
+}
+
 /**
  * Independent server-side authentication & operator context guard:
  * - If Authorization: Bearer <idToken> is sent, verifies cryptographic RS256 Firebase signature and fails closed on invalid/unverified tokens.
- * - Rejects cross-origin non-app browser requests (Origin mismatch) unless verified Bearer token is present.
- * - Scopes persisted server data strictly to `uid` when signed in, or `'local-operator'` in unauthenticated preview/CLI verification unless STRICT_FIREBASE_AUTH=true.
+ * - In production runtimes or when STRICT_FIREBASE_AUTH=true, rejects unauthenticated requests with 401 AUTH_REQUIRED.
+ * - Scopes persisted server data strictly to `uid` when signed in, or `'local-operator'` only in non-production preview/dev verification.
  */
 export function requireServerOperator(allowedWorkspace?: BusinessWorkspaceId) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -155,7 +163,7 @@ export function requireServerOperator(allowedWorkspace?: BusinessWorkspaceId) {
         });
       }
     } else {
-      if (process.env.STRICT_FIREBASE_AUTH === 'true') {
+      if (isProductionRuntime()) {
         return res.status(401).json({
           error: 'Authentication required. Sign in with Google to access this workspace endpoint.',
           code: 'AUTH_REQUIRED',

@@ -152,16 +152,26 @@ export function loadQuotaStore(): QuotaStoreData {
     const raw = fs.readFileSync(STORE_PATH, 'utf8');
     const parsed = JSON.parse(raw) as Partial<QuotaStoreData>;
     const defaults = createInitialStore();
+    const normalizeSelected = (sel?: Partial<Record<AiProviderId, string>>) => ({
+      ...defaults.workspaceConfigs['ws-behind-the-release'].selectedModels,
+      ...(sel || {}),
+      ...(sel?.cloudflare === '@cf/meta/llama-3.1-8b-instruct-fast'
+        ? { cloudflare: getDefaultModelForProvider('cloudflare') }
+        : {}),
+    });
+
     cachedStore = {
       version: 1,
       workspaceConfigs: {
         'ws-behind-the-release': {
           ...defaults.workspaceConfigs['ws-behind-the-release'],
           ...(parsed.workspaceConfigs?.['ws-behind-the-release'] || {}),
+          selectedModels: normalizeSelected(parsed.workspaceConfigs?.['ws-behind-the-release']?.selectedModels),
         },
         'ws-74-studio-sales': {
           ...defaults.workspaceConfigs['ws-74-studio-sales'],
           ...(parsed.workspaceConfigs?.['ws-74-studio-sales'] || {}),
+          selectedModels: normalizeSelected(parsed.workspaceConfigs?.['ws-74-studio-sales']?.selectedModels),
         },
       },
       globalProviderState: {
@@ -408,6 +418,31 @@ export function recordProviderSuccess(opts: {
     lastCooldownReason: undefined,
   };
 
+  saveQuotaStore(store);
+}
+
+/**
+ * Records connection test telemetry without fabricating token/request usage counts.
+ */
+export function recordProviderHealthProbe(opts: {
+  providerId: AiProviderId;
+  ok: boolean;
+  latencyMs: number;
+}): void {
+  const store = loadQuotaStore();
+  const nowIso = new Date().toISOString();
+  const prev = store.globalProviderState[opts.providerId];
+  store.globalProviderState[opts.providerId] = {
+    ...prev,
+    lastCheckedAt: nowIso,
+    lastLatencyMs: opts.latencyMs,
+    ...(opts.ok
+      ? {
+          lastSuccessAt: nowIso,
+          authErrorLocked: false,
+        }
+      : {}),
+  };
   saveQuotaStore(store);
 }
 

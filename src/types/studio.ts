@@ -23,19 +23,16 @@ export type MarketingSubView =
   | 'knowledge-base';
 
 export type SalesSubView =
-  | 'dashboard'
-  | 'leads'
-  | 'intelligence'
-  | 'responses'
-  | 'campaigns'
-  | 'activity'
-  | 'knowledge-base';
+  | 'chat'
+  | 'knowledge-base'
+  | 'settings';
 
 export type CreativeStudioSubView =
   | 'overview'
   | 'carousel-creator'
   | 'carousel-editor'
   | 'reels-studio'
+  | 'video-studio'
   | 'design-themes'
   | 'creative-projects'
   | 'export-history';

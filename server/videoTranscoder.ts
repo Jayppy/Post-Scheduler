@@ -5,6 +5,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { requireServerOperator } from './aiProviders/authMiddleware';
+import { videoTranscodeLimiter } from './rateLimiters';
 
 const execFileAsync = promisify(execFile);
 
@@ -171,10 +173,10 @@ export async function probeAndValidateMp4(
       reason: `Video frame rate must be constant ${expected.fps} FPS (got ${fps} FPS).`,
     };
   }
-  if (duration <= 0 || duration > 60.5) {
+  if (duration <= 0 || duration > 95) {
     return {
       valid: false,
-      reason: `Duration (${duration.toFixed(2)}s) must be between 0.5s and 60s for Reels/Shorts.`,
+      reason: `Duration (${duration.toFixed(2)}s) must be between 0.5s and 95s for Reels/Shorts.`,
     };
   }
 
@@ -232,7 +234,7 @@ export async function transcodeBufferToSocialMp4(opts: {
     const targetW = opts.width % 2 === 0 ? opts.width : opts.width - 1;
     const targetH = opts.height % 2 === 0 ? opts.height : opts.height - 1;
     const targetFps = Math.max(24, Math.min(60, Math.round(opts.fps || 30)));
-    const clampedDuration = Math.max(1, Math.min(60, Number(opts.maxDurationSeconds) || 30));
+    const clampedDuration = Math.max(1, Math.min(95, Number(opts.maxDurationSeconds) || 30));
 
     const args: string[] = ['-y', '-i', inputPath];
 
@@ -309,8 +311,11 @@ export async function transcodeBufferToSocialMp4(opts: {
 }
 
 export function registerVideoTranscoder(app: Express) {
+  const videoAuthGuard = requireServerOperator('ws-behind-the-release');
   app.post(
     '/api/video/transcode-mp4',
+    videoAuthGuard,
+    videoTranscodeLimiter,
     express.raw({
       type: ['video/*', 'application/octet-stream'],
       limit: '160mb',

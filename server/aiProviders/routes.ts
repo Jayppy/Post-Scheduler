@@ -15,6 +15,7 @@ import {
   updateGlobalProviderPolicy,
   updateWorkspaceAiConfig,
 } from './quotaStore';
+import { aiGenerationLimiter } from '../rateLimiters';
 
 const VALID_PROVIDERS = new Set<AiProviderId>(['gemini', 'groq', 'openrouter', 'cloudflare']);
 
@@ -71,6 +72,7 @@ export function registerAiProviderRoutes(app: Express): void {
     '/api/ai-providers/test',
     smallJsonParser,
     authGuard,
+    aiGenerationLimiter,
     async (req: AuthenticatedRequest, res: Response) => {
       const { workspaceId: rawWs, providerId } = (req.body || {}) as {
         workspaceId?: string;
