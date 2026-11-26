@@ -1,4 +1,5 @@
 import {
+  BEHIND_THE_RELEASE_WORKSPACE_ID,
   INITIAL_CAMPAIGNS,
   INITIAL_DESIGN_THEMES,
   INITIAL_EDITING_PRESETS,
@@ -18,6 +19,7 @@ import {
 
 const KEYS = {
   workspaces: 's74_workspaces_v1',
+  workspacesBackup: 's74_workspaces_backup_v1',
   activeWorkspaceId: 's74_active_workspace_v1',
   themes: 's74_design_themes_v1',
   editingPresets: 's74_editing_presets_v1',
@@ -25,7 +27,9 @@ const KEYS = {
   mediaLibrary: 's74_media_library_v1',
   exports: 's74_export_history_v1',
   posts: 's74_social_posts_v1',
+  postsBackup: 's74_social_posts_backup_v1',
   campaigns: 's74_campaigns_v1',
+  campaignsBackup: 's74_campaigns_backup_v1',
 };
 
 function readJson<T>(key: string, fallback: T): T {
@@ -49,21 +53,29 @@ function writeJson<T>(key: string, value: T): void {
 export const studioStorage = {
   loadWorkspaces(): Workspace[] {
     const stored = readJson<Workspace[]>(KEYS.workspaces, []);
-    if (stored.length === 0) {
-      writeJson(KEYS.workspaces, INITIAL_WORKSPACES);
-      return INITIAL_WORKSPACES;
+    const hasLegacyOther = stored.some((w) => w.id !== BEHIND_THE_RELEASE_WORKSPACE_ID);
+    if (hasLegacyOther && !localStorage.getItem(KEYS.workspacesBackup)) {
+      writeJson(KEYS.workspacesBackup, stored);
     }
-    return stored;
+
+    const existingBtr = stored.find((w) => w.id === BEHIND_THE_RELEASE_WORKSPACE_ID);
+    const singleWorkspaceList = [existingBtr || INITIAL_WORKSPACES[0]];
+    if (stored.length !== 1 || hasLegacyOther || !existingBtr) {
+      writeJson(KEYS.workspaces, singleWorkspaceList);
+    }
+    return singleWorkspaceList;
   },
   saveWorkspaces(workspaces: Workspace[]): void {
-    writeJson(KEYS.workspaces, workspaces);
+    const onlyBtr = workspaces.filter((w) => w.id === BEHIND_THE_RELEASE_WORKSPACE_ID);
+    writeJson(KEYS.workspaces, onlyBtr.length > 0 ? onlyBtr : INITIAL_WORKSPACES);
   },
 
   loadActiveWorkspaceId(): string {
-    return localStorage.getItem(KEYS.activeWorkspaceId) || INITIAL_WORKSPACES[0].id;
+    localStorage.setItem(KEYS.activeWorkspaceId, BEHIND_THE_RELEASE_WORKSPACE_ID);
+    return BEHIND_THE_RELEASE_WORKSPACE_ID;
   },
-  saveActiveWorkspaceId(id: string): void {
-    localStorage.setItem(KEYS.activeWorkspaceId, id);
+  saveActiveWorkspaceId(_id: string): void {
+    localStorage.setItem(KEYS.activeWorkspaceId, BEHIND_THE_RELEASE_WORKSPACE_ID);
   },
 
   loadThemes(): DesignTheme[] {
@@ -117,10 +129,19 @@ export const studioStorage = {
       writeJson(KEYS.posts, INITIAL_POSTS);
       return INITIAL_POSTS;
     }
+    const legacyPosts = stored.filter((p) => p.workspaceId === 'ws-74-studio');
+    if (legacyPosts.length > 0) {
+      if (!localStorage.getItem(KEYS.postsBackup)) {
+        writeJson(KEYS.postsBackup, legacyPosts);
+      }
+      const cleaned = stored.filter((p) => p.workspaceId !== 'ws-74-studio');
+      writeJson(KEYS.posts, cleaned.length > 0 ? cleaned : INITIAL_POSTS);
+      return cleaned.length > 0 ? cleaned : INITIAL_POSTS;
+    }
     return stored;
   },
   savePosts(posts: SocialPost[]): void {
-    writeJson(KEYS.posts, posts);
+    writeJson(KEYS.posts, posts.filter((p) => p.workspaceId !== 'ws-74-studio'));
   },
 
   loadCampaigns(): Campaign[] {
@@ -129,10 +150,19 @@ export const studioStorage = {
       writeJson(KEYS.campaigns, INITIAL_CAMPAIGNS);
       return INITIAL_CAMPAIGNS;
     }
+    const legacyCampaigns = stored.filter((c) => c.workspaceId === 'ws-74-studio');
+    if (legacyCampaigns.length > 0) {
+      if (!localStorage.getItem(KEYS.campaignsBackup)) {
+        writeJson(KEYS.campaignsBackup, legacyCampaigns);
+      }
+      const cleaned = stored.filter((c) => c.workspaceId !== 'ws-74-studio');
+      writeJson(KEYS.campaigns, cleaned.length > 0 ? cleaned : INITIAL_CAMPAIGNS);
+      return cleaned.length > 0 ? cleaned : INITIAL_CAMPAIGNS;
+    }
     return stored;
   },
   saveCampaigns(campaigns: Campaign[]): void {
-    writeJson(KEYS.campaigns, campaigns);
+    writeJson(KEYS.campaigns, campaigns.filter((c) => c.workspaceId !== 'ws-74-studio'));
   },
 };
 

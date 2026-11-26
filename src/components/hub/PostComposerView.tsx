@@ -72,7 +72,7 @@ export const PostComposerView: React.FC = () => {
   );
   const [caption, setCaption] = useState(composerDraft?.caption || '');
   const [hashtagsText, setHashtagsText] = useState(
-    (composerDraft?.hashtags || ['#74Studio']).join(' ')
+    (composerDraft?.hashtags || ['#BehindTheRelease']).join(' ')
   );
   const [youtubePrivacyStatus, setYoutubePrivacyStatus] = useState<YouTubePrivacyStatus>(
     composerDraft?.youtubePrivacyStatus || 'public'
@@ -185,7 +185,11 @@ export const PostComposerView: React.FC = () => {
     const needsIg = targetDestPlatforms.includes('instagram');
     const needsYt = targetDestPlatforms.includes('youtube');
     const igConnected = Boolean(connStatus?.instagram.connected && !connStatus?.instagram.lastError);
-    const ytConnected = Boolean(connStatus?.youtube.connected && !connStatus?.youtube.lastError);
+    const ytConnected = Boolean(
+      connStatus?.youtube.connected &&
+        !connStatus?.youtube.lastError &&
+        !connStatus?.youtube.needsReconnect
+    );
 
     const missingPlatforms: string[] = [];
     if (needsIg && !igConnected) missingPlatforms.push('Instagram');

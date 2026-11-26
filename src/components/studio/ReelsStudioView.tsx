@@ -765,8 +765,8 @@ export const ReelsStudioView: React.FC = () => {
       caption: reel.suggestedCaption || `${project.title} — ${reel.hookLine || activeWorkspace.name}`,
       hashtags:
         platform === 'youtube-shorts'
-          ? ['#Shorts', '#MusicIndustry', '#74Studio']
-          : ['#Reels', '#74Studio', '#MusicMarketing'],
+          ? ['#Shorts', '#MusicIndustry', '#BehindTheRelease']
+          : ['#Reels', '#BehindTheRelease', '#MusicMarketing'],
       mediaAssetIds: savedAssets.map((a) => a.id),
       sourceProjectId: project.id,
     });
@@ -785,7 +785,7 @@ export const ReelsStudioView: React.FC = () => {
       platform:
         reel.destinationProfile === 'youtube-shorts' ? 'youtube-shorts' : 'instagram-reel',
       caption: reel.suggestedCaption || project.title,
-      hashtags: ['#74Studio'],
+      hashtags: ['#BehindTheRelease'],
       mediaAssetIds: savedAssets.map((a) => a.id),
       scheduledDate: calDate,
       scheduledTime: calTime,
@@ -1491,7 +1491,7 @@ export const ReelsStudioView: React.FC = () => {
                           onChange={(e) =>
                             updateClip(selectedClip.id, { lowerThird: e.target.value })
                           }
-                          placeholder="e.g., 74 STUDIO · Mixing Notes"
+                          placeholder="e.g., Behind the Release · Mix Notes"
                           className="w-full px-3 py-2 rounded bg-[#09090b] border border-zinc-800 text-xs text-zinc-100"
                         />
                       </div>

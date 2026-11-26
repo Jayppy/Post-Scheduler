@@ -19,9 +19,24 @@ import { CreativeProjectsView } from './components/studio/CreativeProjectsView';
 import { ExportHistoryView } from './components/studio/ExportHistoryView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { FirebaseProvider } from './context/FirebaseContext';
+import { MarketingStudioView } from './components/marketing/MarketingStudioView';
+import { AiProviderDashboardView } from './components/ai/AiProviderDashboardView';
+import { SalesIntelligenceView } from './components/sales/SalesIntelligenceView';
 
 const ActiveViewRouter: React.FC = () => {
   const { navSection, studioSubView } = useStudio();
+
+  if (navSection === 'sales-intelligence') {
+    return <SalesIntelligenceView />;
+  }
+
+  if (navSection === 'ai-providers') {
+    return <AiProviderDashboardView />;
+  }
+
+  if (navSection === 'marketing-studio') {
+    return <MarketingStudioView />;
+  }
 
   if (navSection === 'creative-studio') {
     switch (studioSubView) {

@@ -12,6 +12,8 @@ export interface PlatformStatusInfo {
   configuredOAuthCredentials?: boolean;
   configuredUnifiedConfigId?: boolean;
   connected: boolean;
+  hasRefreshToken?: boolean;
+  needsReconnect?: boolean;
   accountId?: string;
   accountName?: string;
   accountHandle?: string;

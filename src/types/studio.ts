@@ -1,6 +1,11 @@
+export type ActiveBusinessWorkspace = 'behind-the-release' | '74-studio-sales';
+
 export type MainNavSection =
   | 'hub-overview'
   | 'creative-studio'
+  | 'marketing-studio'
+  | 'sales-intelligence'
+  | 'ai-providers'
   | 'ai-assistant'
   | 'media-library'
   | 'post-composer'
@@ -8,6 +13,23 @@ export type MainNavSection =
   | 'publishing-queue'
   | 'campaign-manager'
   | 'connected-accounts';
+
+export type MarketingSubView =
+  | 'dashboard'
+  | 'research'
+  | 'generate'
+  | 'editor'
+  | 'library'
+  | 'knowledge-base';
+
+export type SalesSubView =
+  | 'dashboard'
+  | 'leads'
+  | 'intelligence'
+  | 'responses'
+  | 'campaigns'
+  | 'activity'
+  | 'knowledge-base';
 
 export type CreativeStudioSubView =
   | 'overview'

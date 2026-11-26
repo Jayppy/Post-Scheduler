@@ -337,6 +337,609 @@
         "timestamp",
         "createdAt"
       ]
+    },
+    "MarketingProfile": {
+      "title": "MarketingProfile",
+      "description": "Configurable 74 STUDIO business knowledge base for the Marketing Content Studio.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "businessName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "websiteUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "brandVoice": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "positioning": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "pricingSummary": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "contactSummary": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "servicesJson": {
+          "type": "string",
+          "maxLength": 24000
+        },
+        "icpJson": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "proofJson": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "profileId",
+        "businessName",
+        "websiteUrl",
+        "brandVoice",
+        "positioning",
+        "servicesJson",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MarketingResearchSource": {
+      "title": "MarketingResearchSource",
+      "description": "Verified research source, chart trend, or audience insight record isolated from Behind The Release.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sourceName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sourceUrl": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "category": {
+          "type": "string",
+          "enum": ["industry-report", "charts-discovery", "audience-insight", "buyer-objection", "platform-trend"]
+        },
+        "dataClassification": {
+          "type": "string",
+          "enum": ["current", "historical", "emerging-pattern", "verified-fact", "interpretation", "hypothesis"]
+        },
+        "accessMethod": {
+          "type": "string",
+          "enum": ["live-web-search", "official-reference", "owner-supplied", "optional-api"]
+        },
+        "publicationDate": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "accessedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "freshnessLabel": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "primaryOrSecondary": {
+          "type": "string",
+          "enum": ["primary", "secondary"]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "usageRestrictions": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "finding": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "implications": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "sourceId",
+        "sourceName",
+        "sourceUrl",
+        "category",
+        "dataClassification",
+        "accessMethod",
+        "accessedAt",
+        "primaryOrSecondary",
+        "confidence",
+        "finding",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MarketingContentDraft": {
+      "title": "MarketingContentDraft",
+      "description": "74 STUDIO cross-platform marketing draft containing central concept, 4 platform outputs, and research evidence.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "draftId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "reviewed", "ready-to-copy", "archived"]
+        },
+        "targetAudience": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "serviceOffer": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "objective": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "awarenessStage": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "contentCategory": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "topic": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "tone": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "ctaObjective": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "researchDepth": {
+          "type": "string",
+          "enum": ["standard", "deep"]
+        },
+        "xTargetChars": {
+          "type": "number"
+        },
+        "blogWordTarget": {
+          "type": "number"
+        },
+        "centralConceptJson": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "linkedinContent": {
+          "type": "string",
+          "maxLength": 12000
+        },
+        "xShortContent": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "xExpandedContent": {
+          "type": "string",
+          "maxLength": 6000
+        },
+        "threadsContent": {
+          "type": "string",
+          "maxLength": 6000
+        },
+        "blogJson": {
+          "type": "string",
+          "maxLength": 36000
+        },
+        "evidenceClaimsJson": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "draftId",
+        "title",
+        "status",
+        "targetAudience",
+        "serviceOffer",
+        "contentCategory",
+        "topic",
+        "centralConceptJson",
+        "linkedinContent",
+        "xShortContent",
+        "xExpandedContent",
+        "threadsContent",
+        "blogJson",
+        "evidenceClaimsJson",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SalesProfile": {
+      "title": "SalesProfile",
+      "description": "Verified 74 STUDIO Sales Intelligence knowledge base isolated from Behind The Release.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["ws-74-studio-sales"]
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "businessName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "websiteUrl": { "type": "string", "maxLength": 300 },
+        "brandVoice": { "type": "string", "maxLength": 1500 },
+        "positioning": { "type": "string", "maxLength": 2500 },
+        "pricingPolicy": { "type": "string", "maxLength": 1500 },
+        "contactSummary": { "type": "string", "maxLength": 1000 },
+        "qualificationCriteria": { "type": "string", "maxLength": 2000 },
+        "approvedMessagingNotes": { "type": "string", "maxLength": 2000 },
+        "serviceNames": {
+          "type": "array",
+          "description": "Bounded list of verified 74 STUDIO service names (max 20)."
+        },
+        "knownUrls": {
+          "type": "array",
+          "description": "Bounded list of verified 74 STUDIO URLs (max 25)."
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "workspaceId",
+        "profileId",
+        "businessName",
+        "websiteUrl",
+        "positioning",
+        "pricingPolicy",
+        "serviceNames",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SalesLead": {
+      "title": "SalesLead",
+      "description": "74 STUDIO Sales Intelligence prospect, buyer-intent, opportunity score, and recommended service record.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["ws-74-studio-sales"]
+        },
+        "leadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "handleOrOrg": { "type": "string", "maxLength": 160 },
+        "contactChannel": { "type": "string", "maxLength": 120 },
+        "segment": {
+          "type": "string",
+          "enum": [
+            "Independent recording artist",
+            "Established recording artist",
+            "Music producer",
+            "Beatmaker",
+            "Songwriter",
+            "Record label",
+            "Music manager",
+            "Music business"
+          ]
+        },
+        "channelSource": { "type": "string", "maxLength": 120 },
+        "releaseOrProjectContext": { "type": "string", "maxLength": 2000 },
+        "rawInquiryNotes": { "type": "string", "maxLength": 5000 },
+        "researchSummary": { "type": "string", "maxLength": 4000 },
+        "painPoints": {
+          "type": "array",
+          "description": "Bounded list of prospect pain points (max 15)."
+        },
+        "buyerIntentLevel": {
+          "type": "string",
+          "enum": ["high", "medium", "low", "exploratory"]
+        },
+        "buyerIntentSignals": {
+          "type": "array",
+          "description": "Bounded list of buyer intent signals (max 15)."
+        },
+        "qualificationScore": { "type": "number" },
+        "qualificationRationale": { "type": "string", "maxLength": 2000 },
+        "opportunityScore": { "type": "number" },
+        "recommendedServices": {
+          "type": "array",
+          "description": "Bounded list of recommended 74 STUDIO services (max 10)."
+        },
+        "recommendedNextStep": { "type": "string", "maxLength": 500 },
+        "stage": {
+          "type": "string",
+          "enum": ["new-lead", "researched", "qualified", "proposal-sent", "follow-up", "won", "archived"]
+        },
+        "lastAiProvider": { "type": "string", "enum": ["gemini", "groq", "openrouter", "cloudflare", "fallback"] },
+        "lastAiModel": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "workspaceId",
+        "leadId",
+        "name",
+        "segment",
+        "buyerIntentLevel",
+        "qualificationScore",
+        "opportunityScore",
+        "stage",
+        "painPoints",
+        "buyerIntentSignals",
+        "recommendedServices",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SalesOutput": {
+      "title": "SalesOutput",
+      "description": "74 STUDIO Sales response, proposal, follow-up, or sales campaign intelligence output.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["ws-74-studio-sales"]
+        },
+        "outputId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "leadId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "leadName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "outputType": {
+          "type": "string",
+          "enum": ["personalized-response", "proposal", "follow-up", "sales-campaign-intel"]
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "contentMarkdown": { "type": "string", "maxLength": 36000 },
+        "manifestStatus": { "type": "string", "enum": ["incomplete", "complete", "verified"] },
+        "totalExpectedSections": { "type": "number" },
+        "completedSections": { "type": "number" },
+        "duplicateHeadingsDetected": {
+          "type": "array",
+          "description": "Bounded list of duplicate heading flags (max 20)."
+        },
+        "providerId": { "type": "string", "enum": ["gemini", "groq", "openrouter", "cloudflare", "fallback"] },
+        "model": { "type": "string", "maxLength": 160 },
+        "wasFallback": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "workspaceId",
+        "outputId",
+        "leadId",
+        "leadName",
+        "outputType",
+        "title",
+        "contentMarkdown",
+        "providerId",
+        "model",
+        "wasFallback",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SalesActivity": {
+      "title": "SalesActivity",
+      "description": "Append-only Sales Intelligence activity audit record.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["ws-74-studio-sales"]
+        },
+        "activityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "leadId": { "type": "string", "maxLength": 128 },
+        "leadName": { "type": "string", "maxLength": 160 },
+        "activityType": {
+          "type": "string",
+          "enum": [
+            "lead-created",
+            "lead-researched",
+            "lead-qualified",
+            "response-generated",
+            "proposal-generated",
+            "follow-up-drafted",
+            "campaign-intel-generated",
+            "stage-updated"
+          ]
+        },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "detail": { "type": "string", "maxLength": 800 },
+        "providerId": { "type": "string", "enum": ["gemini", "groq", "openrouter", "cloudflare", "fallback"] },
+        "model": { "type": "string", "maxLength": 160 },
+        "timestamp": { "type": "string", "minLength": 10, "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "workspaceId",
+        "activityId",
+        "activityType",
+        "summary",
+        "timestamp",
+        "createdAt"
+      ]
+    },
+    "AiWorkspaceConfig": {
+      "title": "AiWorkspaceConfig",
+      "description": "Sanitized per-workspace AI provider routing and free-tier quota profile (zero secrets or raw logs).",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["ws-behind-the-release", "ws-74-studio-sales"]
+        },
+        "workspaceLabel": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "providerOrder": {
+          "type": "array",
+          "description": "Bounded ordered list of enabled provider IDs (max 4)."
+        },
+        "geminiEnabled": { "type": "boolean" },
+        "groqEnabled": { "type": "boolean" },
+        "openrouterEnabled": { "type": "boolean" },
+        "cloudflareEnabled": { "type": "boolean" },
+        "geminiModel": { "type": "string", "maxLength": 120 },
+        "groqModel": { "type": "string", "maxLength": 120 },
+        "openrouterModel": { "type": "string", "maxLength": 120 },
+        "cloudflareModel": { "type": "string", "maxLength": 120 },
+        "maxOutputTokens": { "type": "number" },
+        "requestTimeoutMs": { "type": "number" },
+        "streamingEnabled": { "type": "boolean" },
+        "dailyRequestBudget": { "type": "number" },
+        "dailyTokenBudget": { "type": "number" },
+        "warningThresholdPct": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "workspaceId",
+        "workspaceLabel",
+        "providerOrder",
+        "geminiEnabled",
+        "groqEnabled",
+        "openrouterEnabled",
+        "cloudflareEnabled",
+        "maxOutputTokens",
+        "requestTimeoutMs",
+        "streamingEnabled",
+        "dailyRequestBudget",
+        "dailyTokenBudget",
+        "warningThresholdPct",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -355,6 +958,38 @@
     "/users/{userId}/publishHistory/{historyId}": {
       "schema": { "$ref": "#/entities/PublishHistoryRecord" },
       "description": "Immutable publishing audit records and errors per workspace."
+    },
+    "/users/{userId}/marketingProfiles/{profileId}": {
+      "schema": { "$ref": "#/entities/MarketingProfile" },
+      "description": "Configurable 74 STUDIO business knowledge base isolated from Behind The Release."
+    },
+    "/users/{userId}/researchSources/{sourceId}": {
+      "schema": { "$ref": "#/entities/MarketingResearchSource" },
+      "description": "Music-industry research sources and audience insights used by 74 STUDIO Marketing Content Studio."
+    },
+    "/users/{userId}/marketingDrafts/{draftId}": {
+      "schema": { "$ref": "#/entities/MarketingContentDraft" },
+      "description": "Saved 74 STUDIO cross-platform marketing concepts and drafts (never auto-published)."
+    },
+    "/users/{userId}/salesProfiles/{profileId}": {
+      "schema": { "$ref": "#/entities/SalesProfile" },
+      "description": "74 STUDIO Sales Intelligence verified knowledge base isolated from Behind The Release."
+    },
+    "/users/{userId}/salesLeads/{leadId}": {
+      "schema": { "$ref": "#/entities/SalesLead" },
+      "description": "74 STUDIO Sales Intelligence prospect, buyer-intent, and opportunity records."
+    },
+    "/users/{userId}/salesOutputs/{outputId}": {
+      "schema": { "$ref": "#/entities/SalesOutput" },
+      "description": "Generated 74 STUDIO sales responses, proposals, follow-ups, and campaign intelligence."
+    },
+    "/users/{userId}/salesActivities/{activityId}": {
+      "schema": { "$ref": "#/entities/SalesActivity" },
+      "description": "Append-only 74 STUDIO Sales Intelligence activity timeline."
+    },
+    "/users/{userId}/aiWorkspaceConfigs/{workspaceId}": {
+      "schema": { "$ref": "#/entities/AiWorkspaceConfig" },
+      "description": "Sanitized per-workspace AI provider profile configuration (no secrets)."
     }
   }
 }

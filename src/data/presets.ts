@@ -6,30 +6,9 @@ import {
   Workspace,
 } from '../types/studio';
 
+export const BEHIND_THE_RELEASE_WORKSPACE_ID = 'ws-behind-the-release';
+
 export const INITIAL_WORKSPACES: Workspace[] = [
-  {
-    id: 'ws-74-studio',
-    name: '74 STUDIO',
-    tagline: 'Creative Direction & Music Brand Architecture',
-    aestheticStyle: 'Dark luxury agency precision with high-contrast monochrome & metallic silver',
-    brandVoice:
-      'Confident creative-agency authority. Sharp, commercially aware, artist-first, concise editorial sentences without fluff.',
-    watermarkText: '74 STUDIO',
-    watermarkEnabled: true,
-    defaultThemeId: 'theme-dark-luxury',
-    defaultOutroText: '74 STUDIO — Creative Direction for Defining Releases',
-    palette: {
-      background: '#09090b',
-      surface: '#141418',
-      accent: '#e4e4e7',
-      text: '#fafafa',
-    },
-    typography: {
-      displayFont: 'Plus Jakarta Sans',
-      bodyFont: 'Manrope',
-    },
-    createdAt: '2026-01-10T09:00:00.000Z',
-  },
   {
     id: 'ws-behind-the-release',
     name: 'Behind the Release',
@@ -348,16 +327,6 @@ export const INITIAL_EDITING_PRESETS: EditingPreset[] = [
 
 export const INITIAL_CAMPAIGNS: Campaign[] = [
   {
-    id: 'camp-74-q4-roster',
-    workspaceId: 'ws-74-studio',
-    name: 'Q4 Roster Visual Identity Rollout',
-    objective: 'Position 74 STUDIO flagship creative direction case studies for Q4 label retainers.',
-    startDate: '2026-11-15',
-    endDate: '2026-12-20',
-    status: 'active',
-    linkedProjectIds: [],
-  },
-  {
     id: 'camp-btr-waterfall',
     workspaceId: 'ws-behind-the-release',
     name: 'Waterfall Release Strategy Series',
@@ -370,22 +339,6 @@ export const INITIAL_CAMPAIGNS: Campaign[] = [
 ];
 
 export const INITIAL_POSTS: SocialPost[] = [
-  {
-    id: 'post-74-seed-1',
-    workspaceId: 'ws-74-studio',
-    title: 'Visual Systems for Album Rollouts',
-    platform: 'instagram-carousel',
-    caption:
-      'Strong visual architecture turns a single release into a recognizable world. Three principles we enforce on every 74 STUDIO campaign.',
-    hashtags: ['#74Studio', '#CreativeDirection', '#MusicBranding', '#AlbumRollout'],
-    mediaAssetIds: [],
-    status: 'scheduled',
-    scheduledDate: '2026-11-24',
-    scheduledTime: '18:00',
-    campaignId: 'camp-74-q4-roster',
-    createdAt: '2026-11-20T10:00:00.000Z',
-    updatedAt: '2026-11-20T10:00:00.000Z',
-  },
   {
     id: 'post-btr-seed-1',
     workspaceId: 'ws-behind-the-release',

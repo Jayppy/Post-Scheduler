@@ -40,8 +40,7 @@ import {
 import { SendConfirmationModal, SendModalInput } from './SendConfirmationModal';
 
 export const ConnectedAccountsView: React.FC = () => {
-  const { workspaces, activeWorkspace, setActiveWorkspaceId, workspaceMedia, setNavSection, notify } =
-    useStudio();
+  const { activeWorkspace, workspaceMedia, setNavSection, notify } = useStudio();
   const {
     user,
     authReady,
@@ -256,31 +255,15 @@ export const ConnectedAccountsView: React.FC = () => {
             <span>Connected Accounts</span>
           </div>
           <h1 className="text-2xl font-bold text-zinc-100">
-            Instagram Unified Login & YouTube Connections
+            Instagram Unified Login &amp; YouTube Connections
           </h1>
           <p className="text-xs text-zinc-400 mt-1 max-w-2xl">
-            Connections are strictly isolated per workspace. Accounts authorized while{' '}
-            <span className="text-zinc-200 font-semibold">{activeWorkspace.name}</span> is active will never publish to other brands.
+            Manage persistent social publishing accounts for{' '}
+            <span className="text-zinc-200 font-semibold">{activeWorkspace.name}</span>. OAuth tokens are encrypted server-side and renewed automatically.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex p-1 rounded-lg bg-[#111114] border border-zinc-800">
-            {workspaces.map((ws) => (
-              <button
-                key={ws.id}
-                type="button"
-                onClick={() => setActiveWorkspaceId(ws.id)}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap ${
-                  ws.id === activeWorkspace.id
-                    ? 'bg-zinc-100 text-zinc-950 font-semibold'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                {ws.name}
-              </button>
-            ))}
-          </div>
           <button
             type="button"
             onClick={() => loadData(true)}
@@ -370,7 +353,7 @@ export const ConnectedAccountsView: React.FC = () => {
             </div>
 
             {status?.youtube.connected ? (
-              status.youtube.lastError ? (
+              status.youtube.needsReconnect || status.youtube.lastError ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400">
                   <AlertTriangle className="w-4 h-4" />
                   <span>Needs Reconnect</span>
@@ -378,7 +361,9 @@ export const ConnectedAccountsView: React.FC = () => {
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Authorized</span>
+                  <span>
+                    {status.youtube.hasRefreshToken ? 'Authorized · Persistent' : 'Authorized'}
+                  </span>
                 </span>
               )
             ) : (
@@ -388,13 +373,23 @@ export const ConnectedAccountsView: React.FC = () => {
 
           {status?.youtube.connected ? (
             <div className="p-4 rounded-lg bg-[#09090b] border border-zinc-800 space-y-1.5">
-              <div className="text-xs text-zinc-400">Connected Channel ({activeWorkspace.name})</div>
+              <div className="flex items-center justify-between text-xs text-zinc-400">
+                <span>Connected Channel ({activeWorkspace.name})</span>
+                <span className="font-mono text-[10px] text-zinc-500">
+                  {status.youtube.hasRefreshToken ? 'Offline Refresh Stored' : 'No Refresh Token'}
+                </span>
+              </div>
               <div className="text-sm font-semibold text-zinc-100">
                 {status.youtube.accountName}
                 {status.youtube.accountHandle ? ` (${status.youtube.accountHandle})` : ''}
               </div>
               <div className="text-[11px] font-mono text-zinc-500">
                 Channel ID: {status.youtube.accountId}
+                {status.youtube.expiresAt
+                  ? ` · Access token auto-renews (current exp ${new Date(
+                      status.youtube.expiresAt
+                    ).toLocaleTimeString()})`
+                  : ''}
               </div>
               {status.youtube.lastError && (
                 <div className="mt-2 p-2.5 rounded border border-red-500/40 bg-red-950/20 text-xs text-red-200">

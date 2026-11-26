@@ -140,6 +140,7 @@ interface VaultSnapshot {
   publishedDirectKeys?: Record<string, DirectPublishedRecord>;
 }
 
+const META_GRAPH_HOST = 'https://graph.facebook.com';
 const META_GRAPH_VERSION = 'v21.0';
 const VAULT_FILE = path.join(getDataDirPath(), 'integrations-vault.json');
 
@@ -459,7 +460,13 @@ function getInstagramEnv() {
   if (!appId) missingVars.push('META_APP_ID');
   if (!appSecret) missingVars.push('META_APP_SECRET');
   if (!configId) missingVars.push('META_LOGIN_CONFIG_ID');
-  return { appId, appSecret, configId, missingVars, configured: missingVars.length === 0 };
+  return {
+    appId,
+    appSecret,
+    configId,
+    missingVars,
+    configured: missingVars.length === 0,
+  };
 }
 
 function getYouTubeEnv() {
@@ -505,47 +512,164 @@ function recordHistory(entry: PublishHistoryEntry) {
   saveVaultToDisk();
 }
 
-async function ensureFreshYouTubeToken(conn: WorkspaceConnection): Promise<string> {
-  if (!conn.expiresAt || Date.now() < conn.expiresAt - 60_000) {
-    return conn.accessToken;
-  }
+const youtubeRefreshLocks = new Map<string, Promise<string>>();
+
+async function performYouTubeTokenRefresh(conn: WorkspaceConnection): Promise<string> {
   const yt = getYouTubeEnv();
-  if (!conn.refreshToken || !yt.configured) {
-    return conn.accessToken;
+  if (!conn.refreshToken) {
+    const msg =
+      'YouTube offline refresh token is missing. Click Reconnect to grant persistent offline access.';
+    conn.lastError = msg;
+    conn.updatedAt = new Date().toISOString();
+    saveVaultToDisk();
+    throw new Error(msg);
+  }
+  if (!yt.configured) {
+    throw new Error(
+      `${yt.missingVars.join(' and ')} must be configured in Settings > Secrets to refresh YouTube authorization.`
+    );
   }
 
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: yt.clientId,
-      client_secret: yt.clientSecret,
-      refresh_token: conn.refreshToken,
-      grant_type: 'refresh_token',
-    }),
-  });
+  let res: globalThis.Response;
+  try {
+    res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: yt.clientId,
+        client_secret: yt.clientSecret,
+        refresh_token: conn.refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+  } catch (networkErr) {
+    const msg = networkErr instanceof Error ? networkErr.message : 'Network error';
+    throw new Error(`Temporary network failure contacting Google OAuth: ${msg}`);
+  }
+
   const data = (await res.json().catch(() => ({}))) as {
     access_token?: string;
+    refresh_token?: string;
     expires_in?: number;
     error?: string;
     error_description?: string;
   };
+
   if (!res.ok || !data.access_token) {
-    conn.lastError =
+    const isRevoked =
+      data.error === 'invalid_grant' ||
+      data.error === 'unauthorized_client' ||
+      res.status === 400 ||
+      res.status === 401;
+
+    if (isRevoked) {
+      conn.lastError =
+        'YouTube authorization was revoked or expired by Google. Click Reconnect to authorize again.';
+      conn.updatedAt = new Date().toISOString();
+      saveVaultToDisk();
+      throw new Error(conn.lastError);
+    }
+
+    throw new Error(
       data.error_description ||
-      data.error ||
-      'YouTube authorization expired. Reconnect YouTube in Connected Accounts.';
-    conn.updatedAt = new Date().toISOString();
-    saveVaultToDisk();
-    throw new Error(conn.lastError);
+        data.error ||
+        `Temporary Google OAuth refresh error (HTTP ${res.status}).`
+    );
   }
 
   conn.accessToken = data.access_token;
+  // Never overwrite an existing valid refresh token with null/empty if Google omits a replacement
+  conn.refreshToken = data.refresh_token || conn.refreshToken;
   conn.expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
   conn.lastError = undefined;
   conn.updatedAt = new Date().toISOString();
   saveVaultToDisk();
   return conn.accessToken;
+}
+
+async function ensureFreshYouTubeToken(
+  conn: WorkspaceConnection,
+  forceRefresh = false
+): Promise<string> {
+  const isExpiringSoon = !conn.expiresAt || Date.now() >= conn.expiresAt - 60_000;
+  if (!forceRefresh && !isExpiringSoon && conn.accessToken && !conn.lastError) {
+    return conn.accessToken;
+  }
+
+  if (!conn.refreshToken) {
+    if (!forceRefresh && !isExpiringSoon && conn.accessToken) {
+      return conn.accessToken;
+    }
+    const msg =
+      'YouTube offline refresh token is missing. Click Reconnect to grant persistent offline access.';
+    conn.lastError = msg;
+    conn.updatedAt = new Date().toISOString();
+    saveVaultToDisk();
+    throw new Error(msg);
+  }
+
+  const lockKey = connKey(conn.workspaceId, 'youtube');
+  const existingPromise = youtubeRefreshLocks.get(lockKey);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const refreshPromise = performYouTubeTokenRefresh(conn).finally(() => {
+    youtubeRefreshLocks.delete(lockKey);
+  });
+  youtubeRefreshLocks.set(lockKey, refreshPromise);
+  return refreshPromise;
+}
+
+async function verifyYouTubeTokenHealth(
+  conn: WorkspaceConnection
+): Promise<{ valid: boolean; error?: string }> {
+  try {
+    let token = await ensureFreshYouTubeToken(conn);
+    let chanRes = await fetch(
+      'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (chanRes.status === 401 && conn.refreshToken) {
+      token = await ensureFreshYouTubeToken(conn, true);
+      chanRes = await fetch(
+        'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    }
+
+    const chanData = (await chanRes.json().catch(() => ({}))) as {
+      items?: Array<{ id: string; snippet?: { title?: string; customUrl?: string } }>;
+      error?: { message?: string };
+    };
+
+    if (chanRes.status === 401 || chanRes.status === 403) {
+      const msg =
+        chanData.error?.message ||
+        'YouTube authorization was revoked or lacks required permissions. Click Reconnect to reauthorize.';
+      conn.lastError = msg;
+      conn.updatedAt = new Date().toISOString();
+      saveVaultToDisk();
+      return { valid: false, error: msg };
+    }
+
+    const channel = chanData.items?.[0];
+    if (chanRes.ok && channel) {
+      conn.accountId = channel.id || conn.accountId;
+      conn.accountName = channel.snippet?.title || conn.accountName;
+      conn.accountHandle = channel.snippet?.customUrl || conn.accountHandle;
+      conn.lastError = undefined;
+      conn.updatedAt = new Date().toISOString();
+      saveVaultToDisk();
+      return { valid: true };
+    }
+
+    return { valid: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'YouTube verification failed.';
+    return { valid: false, error: msg };
+  }
 }
 
 async function verifyInstagramTokenHealth(conn: WorkspaceConnection): Promise<{ valid: boolean; error?: string }> {
@@ -557,58 +681,37 @@ async function verifyInstagramTokenHealth(conn: WorkspaceConnection): Promise<{ 
     return { valid: false, error: msg };
   }
 
-  const igEnv = getInstagramEnv();
-  if (!igEnv.appId || !igEnv.appSecret) {
-    return { valid: true };
-  }
-
   try {
-    const appAccessToken = `${igEnv.appId}|${igEnv.appSecret}`;
-    const res = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/debug_token?input_token=${encodeURIComponent(
-        conn.accessToken
-      )}&access_token=${encodeURIComponent(appAccessToken)}`
+    const meRes = await fetch(
+      `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(
+        conn.accountId
+      )}?fields=id,username,name`,
+      {
+        headers: { Authorization: `Bearer ${conn.accessToken}` },
+      }
     );
-    const json = (await res.json()) as {
-      data?: {
-        is_valid?: boolean;
-        expires_at?: number;
-        error?: { message?: string };
-      };
+    const meJson = (await meRes.json().catch(() => ({}))) as {
+      id?: string;
+      username?: string;
+      name?: string;
+      error?: { message?: string; code?: number };
     };
-    if (json.data && json.data.is_valid === false) {
+
+    if (!meRes.ok || meJson.error) {
       const msg =
-        json.data.error?.message ||
-        'Instagram token is no longer valid. Reconnect your Instagram Professional account.';
+        meJson.error?.message ||
+        'Instagram token is no longer valid. Reconnect your Instagram account via Meta Unified Login.';
       conn.lastError = msg;
       conn.updatedAt = new Date().toISOString();
       saveVaultToDisk();
       return { valid: false, error: msg };
     }
-    if (json.data?.expires_at && json.data.expires_at > 0) {
-      conn.expiresAt = json.data.expires_at * 1000;
-    }
 
-    // Proactively refresh non-System-User long-lived USER tokens if expiring within 7 days
-    if (
-      conn.tokenType === 'USER' &&
-      conn.expiresAt &&
-      conn.expiresAt - Date.now() < 7 * 86400 * 1000
-    ) {
-      const llParams = new URLSearchParams({
-        grant_type: 'fb_exchange_token',
-        client_id: igEnv.appId,
-        client_secret: igEnv.appSecret,
-        fb_exchange_token: conn.accessToken,
-      });
-      const llRes = await fetch(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token?${llParams.toString()}`
-      );
-      const llData = (await llRes.json()) as { access_token?: string; expires_in?: number };
-      if (llData.access_token) {
-        conn.accessToken = llData.access_token;
-        conn.expiresAt = Date.now() + (llData.expires_in || 60 * 86400) * 1000;
-      }
+    if (meJson.username) {
+      conn.accountHandle = meJson.username;
+    }
+    if (meJson.name) {
+      conn.accountName = meJson.name;
     }
 
     conn.lastError = undefined;
@@ -632,7 +735,7 @@ async function publishToYouTube(
     onVideoId?: (videoId: string) => void;
   }
 ): Promise<{ videoId: string; url: string }> {
-  const token = await ensureFreshYouTubeToken(conn);
+  let token = await ensureFreshYouTubeToken(conn);
   const metadata = {
     snippet: {
       title: opts.title.slice(0, 100),
@@ -646,25 +749,33 @@ async function publishToYouTube(
     },
   };
 
-  // Step 1: Initiate resumable upload
-  const initRes = await fetch(
-    'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json; charset=UTF-8',
-        'X-Upload-Content-Length': String(opts.videoBuffer.length),
-        'X-Upload-Content-Type': opts.mimeType || 'video/mp4',
-      },
-      body: JSON.stringify(metadata),
-    }
-  );
+  const initiateResumableUpload = (bearerToken: string) =>
+    fetch(
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${bearerToken}`,
+          'Content-Type': 'application/json; charset=UTF-8',
+          'X-Upload-Content-Length': String(opts.videoBuffer.length),
+          'X-Upload-Content-Type': opts.mimeType || 'video/mp4',
+        },
+        body: JSON.stringify(metadata),
+      }
+    );
+
+  // Step 1: Initiate resumable upload (retry once with forced token refresh on 401)
+  let initRes = await initiateResumableUpload(token);
+  if (initRes.status === 401 && conn.refreshToken) {
+    token = await ensureFreshYouTubeToken(conn, true);
+    initRes = await initiateResumableUpload(token);
+  }
 
   if (!initRes.ok) {
     const errText = await initRes.text();
     if (initRes.status === 401 || initRes.status === 403) {
       conn.lastError = 'YouTube authorization expired or missing upload permission.';
+      conn.updatedAt = new Date().toISOString();
       saveVaultToDisk();
     }
     throw new Error(`YouTube upload init failed (${initRes.status}): ${errText}`);
@@ -718,7 +829,7 @@ async function waitForInstagramContainer(
 ): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
     const statusRes = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(
+      `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(
         creationId
       )}?fields=status_code,status`,
       {
@@ -749,7 +860,7 @@ async function fetchInstagramPermalink(
 ): Promise<string> {
   try {
     const res = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(
+      `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(
         mediaId
       )}?fields=id,permalink`,
       {
@@ -793,7 +904,7 @@ async function publishToInstagram(
   if (opts.platform === 'instagram-reel') {
     const videoUrl = registerTempMedia(opts.mediaItems[0].buffer, opts.mediaItems[0].mimeType, opts.baseUrl);
     const res = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
+      `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
       {
         method: 'POST',
         headers: {
@@ -820,7 +931,7 @@ async function publishToInstagram(
       const url = registerTempMedia(item.buffer, item.mimeType, opts.baseUrl);
       const isVid = item.mimeType.startsWith('video/');
       const childRes = await fetch(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
+        `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
         {
           method: 'POST',
           headers: {
@@ -844,7 +955,7 @@ async function publishToInstagram(
     }
 
     const parentRes = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
+      `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
       {
         method: 'POST',
         headers: {
@@ -870,7 +981,7 @@ async function publishToInstagram(
     const isVid = first.mimeType.startsWith('video/');
     const mediaUrl = registerTempMedia(first.buffer, first.mimeType, opts.baseUrl);
     const res = await fetch(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
+      `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media`,
       {
         method: 'POST',
         headers: {
@@ -894,7 +1005,7 @@ async function publishToInstagram(
 
   // Publish container
   const pubRes = await fetch(
-    `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media_publish`,
+    `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(igUserId)}/media_publish`,
     {
       method: 'POST',
       headers: {
@@ -942,7 +1053,7 @@ async function reconcileDestinationOnPlatform(
     }
     try {
       const containerRes = await fetch(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(
+        `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/${encodeURIComponent(
           dest.inFlightId
         )}?fields=status_code,status`,
         { headers: { Authorization: `Bearer ${conn.accessToken}` } }
@@ -1206,18 +1317,32 @@ export function registerSocialIntegrations(app: Express) {
     const yt = connections.get(connKey(workspaceId, 'youtube'));
     const ig = connections.get(connKey(workspaceId, 'instagram'));
 
-    if (shouldVerify) {
-      if (ig) {
-        await verifyInstagramTokenHealth(ig);
-      }
-      if (yt) {
+    // Automatically renew expiring/expired YouTube access tokens on every status check
+    // so connections persist across page reloads and browser restarts without re-login.
+    if (yt) {
+      const needsAutoRefresh =
+        !yt.expiresAt ||
+        Date.now() >= yt.expiresAt - 60_000 ||
+        Boolean(yt.lastError && yt.refreshToken);
+      if (shouldVerify) {
+        await verifyYouTubeTokenHealth(yt);
+      } else if (needsAutoRefresh) {
         await ensureFreshYouTubeToken(yt).catch(() => {});
       }
+    }
+
+    if (shouldVerify && ig) {
+      await verifyInstagramTokenHealth(ig);
     }
 
     const baseUrl = getAppBaseUrl(req);
     const ytEnv = getYouTubeEnv();
     const igEnv = getInstagramEnv();
+    const ytNeedsReconnect = Boolean(
+      yt &&
+        (yt.lastError ||
+          (!yt.refreshToken && (!yt.expiresAt || Date.now() >= yt.expiresAt - 60_000)))
+    );
 
     return res.json({
       appBaseUrl: baseUrl,
@@ -1225,6 +1350,8 @@ export function registerSocialIntegrations(app: Express) {
         configured: ytEnv.configured,
         missingVars: ytEnv.missingVars,
         connected: Boolean(yt),
+        hasRefreshToken: Boolean(yt?.refreshToken),
+        needsReconnect: ytNeedsReconnect,
         accountId: yt?.accountId,
         accountName: yt?.accountName,
         accountHandle: yt?.accountHandle,
@@ -1241,6 +1368,7 @@ export function registerSocialIntegrations(app: Express) {
         configuredOAuthCredentials: Boolean(igEnv.appId && igEnv.appSecret),
         configuredUnifiedConfigId: Boolean(igEnv.configId),
         connected: Boolean(ig),
+        needsReconnect: Boolean(ig?.lastError),
         accountId: ig?.accountId,
         accountName: ig?.accountName,
         accountHandle: ig?.accountHandle,
@@ -1278,13 +1406,20 @@ export function registerSocialIntegrations(app: Express) {
     });
     saveVaultToDisk();
 
+    const existingConn = connections.get(connKey(workspaceId, 'youtube'));
+    const forceConsent =
+      req.query.forceConsent === 'true' ||
+      !existingConn?.refreshToken ||
+      Boolean(existingConn?.lastError);
+
     const params = new URLSearchParams({
       client_id: ytEnv.clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
       scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
       access_type: 'offline',
-      prompt: 'consent',
+      include_granted_scopes: 'true',
+      prompt: forceConsent ? 'consent' : 'select_account',
       state,
     });
 
@@ -1298,8 +1433,12 @@ export function registerSocialIntegrations(app: Express) {
     const errParam = String(req.query.error || '');
 
     if (errParam) {
+      const displayErr =
+        errParam === 'access_denied'
+          ? 'access_denied (If Google OAuth Consent Screen is in Testing mode, add this Google account under Audience / Test users in Google Cloud Console, or publish & verify the app.)'
+          : errParam;
       return res.status(400).send(
-        `<html><body><p>YouTube authorization declined: ${escapeHtml(errParam)}</p><script>if(window.opener){window.opener.postMessage({type:'OAUTH_AUTH_ERROR',platform:'youtube',error:${JSON.stringify(errParam)}},'*');window.close();}</script></body></html>`
+        `<html><body style="background:#09090b;color:#fafafa;font-family:sans-serif;padding:24px;"><p>YouTube authorization declined: ${escapeHtml(displayErr)}</p><script>if(window.opener){window.opener.postMessage({type:'OAUTH_AUTH_ERROR',platform:'youtube',error:${JSON.stringify(displayErr)}},'*');window.close();}</script></body></html>`
       );
     }
 
@@ -1356,6 +1495,7 @@ export function registerSocialIntegrations(app: Express) {
       const accountId = channel.id;
       const prev = connections.get(connKey(stateEntry.workspaceId, 'youtube'));
       const nowIso = new Date().toISOString();
+      const mergedRefreshToken = tokenData.refresh_token || prev?.refreshToken;
 
       connections.set(connKey(stateEntry.workspaceId, 'youtube'), {
         workspaceId: stateEntry.workspaceId,
@@ -1364,11 +1504,13 @@ export function registerSocialIntegrations(app: Express) {
         accountName,
         accountHandle: channel.snippet?.customUrl,
         accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token || prev?.refreshToken,
+        refreshToken: mergedRefreshToken,
         tokenType: 'GOOGLE_OAUTH',
         expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
-        lastError: undefined,
-        connectedAt: nowIso,
+        lastError: mergedRefreshToken
+          ? undefined
+          : 'Connected without an offline refresh token. Click Reconnect to grant permanent offline access.',
+        connectedAt: prev?.connectedAt || nowIso,
         updatedAt: nowIso,
       });
       saveVaultToDisk();
@@ -1392,7 +1534,7 @@ export function registerSocialIntegrations(app: Express) {
   };
   app.get(['/api/auth/youtube/callback', '/api/auth/youtube/callback/'], handleYouTubeCallback);
 
-  // 2A. Instagram Unified Login (Facebook Login for Business) OAuth URL generator
+  // 2A. Meta Unified Login (Facebook Login for Business) OAuth URL generator
   app.get('/api/auth/instagram/url', (req: Request, res: Response) => {
     const workspaceId = String(req.query.workspaceId || '').trim();
     if (!workspaceId) {
@@ -1421,8 +1563,8 @@ export function registerSocialIntegrations(app: Express) {
       client_id: igEnv.appId,
       redirect_uri: redirectUri,
       config_id: igEnv.configId,
-      response_type: 'code',
       override_default_response_type: 'true',
+      response_type: 'code',
       state,
     });
 
@@ -1431,11 +1573,12 @@ export function registerSocialIntegrations(app: Express) {
     });
   });
 
-  // 2B. Instagram Unified Login OAuth Callback
+  // 2B. Meta Unified Login OAuth Callback
   const handleInstagramCallback = async (req: Request, res: Response) => {
-    const code = String(req.query.code || '');
-    const state = String(req.query.state || '');
-    const errParam = String(req.query.error_description || req.query.error || '');
+    const rawCode = String(req.query.code || '');
+    const code = rawCode.replace(/#_$/, '').trim();
+    const state = String(req.query.state || '').trim();
+    const errParam = String(req.query.error_description || req.query.error || req.query.error_reason || '');
 
     if (errParam) {
       return res.status(400).send(
@@ -1451,165 +1594,148 @@ export function registerSocialIntegrations(app: Express) {
     }
 
     const igEnv = getInstagramEnv();
-    if (!igEnv.appId || !igEnv.appSecret) {
-      return res.status(500).send('META_APP_ID and META_APP_SECRET are not configured on the server.');
+    if (!igEnv.configured) {
+      return res.status(500).send('META_APP_ID, META_APP_SECRET, and META_LOGIN_CONFIG_ID are not configured on the server.');
     }
 
     try {
-      const exchangeCode = async (includeRedirectUri: boolean) => {
-        const params = new URLSearchParams({
+      // Step 1: Exchange authorization code using Meta Graph API oauth/access_token
+      const exchangeParams = new URLSearchParams({
+        client_id: igEnv.appId,
+        client_secret: igEnv.appSecret,
+        redirect_uri: stateEntry.redirectUri,
+        code,
+      });
+      const tokenRes = await fetch(
+        `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/oauth/access_token?${exchangeParams.toString()}`
+      );
+      const tokenJson = (await tokenRes.json().catch(() => ({}))) as {
+        access_token?: string;
+        token_type?: string;
+        expires_in?: number;
+        error?: { message?: string };
+      };
+
+      if (!tokenRes.ok || !tokenJson.access_token) {
+        throw new Error(
+          tokenJson.error?.message || 'Failed to exchange Meta Unified Login authorization code.'
+        );
+      }
+
+      let finalToken = tokenJson.access_token;
+      let resolvedTokenType: 'SYSTEM_USER' | 'USER' = 'USER';
+      let expiresAt: number | undefined =
+        typeof tokenJson.expires_in === 'number' && tokenJson.expires_in > 0
+          ? Date.now() + tokenJson.expires_in * 1000
+          : undefined;
+
+      // Step 2: Inspect token type (SYSTEM_USER vs USER) and upgrade short-lived USER tokens
+      try {
+        const debugParams = new URLSearchParams({
+          input_token: finalToken,
+          access_token: `${igEnv.appId}|${igEnv.appSecret}`,
+        });
+        const debugRes = await fetch(
+          `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/debug_token?${debugParams.toString()}`
+        );
+        const debugJson = (await debugRes.json().catch(() => ({}))) as {
+          data?: {
+            type?: string;
+            expires_at?: number;
+            is_valid?: boolean;
+          };
+        };
+
+        const tokenTypeUpper = String(debugJson.data?.type || '').toUpperCase();
+        const debugExpiresAt = Number(debugJson.data?.expires_at || 0);
+
+        if (tokenTypeUpper === 'SYSTEM_USER') {
+          resolvedTokenType = 'SYSTEM_USER';
+          expiresAt = debugExpiresAt > 0 ? debugExpiresAt * 1000 : undefined;
+        } else if (debugExpiresAt === 0 && !tokenJson.expires_in) {
+          resolvedTokenType = 'USER';
+          expiresAt = undefined;
+        }
+      } catch {
+        // Proceed with standard exchange fallback below if debug_token is unavailable
+      }
+
+      if (resolvedTokenType === 'USER' && expiresAt !== undefined) {
+        const llParams = new URLSearchParams({
+          grant_type: 'fb_exchange_token',
           client_id: igEnv.appId,
           client_secret: igEnv.appSecret,
-          code,
+          fb_exchange_token: finalToken,
         });
-        if (includeRedirectUri) {
-          params.set('redirect_uri', stateEntry.redirectUri);
-        }
-        const r = await fetch(
-          `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token?${params.toString()}`
+        const llRes = await fetch(
+          `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/oauth/access_token?${llParams.toString()}`
         );
-        const json = (await r.json()) as {
+        const llData = (await llRes.json().catch(() => ({}))) as {
           access_token?: string;
           expires_in?: number;
-          token_type?: string;
-          error?: { message?: string; code?: number };
         };
-        return { ok: r.ok, json };
-      };
-
-      let tokenExchange = await exchangeCode(true);
-      if (!tokenExchange.ok && tokenExchange.json.error?.message?.toLowerCase().includes('redirect_uri')) {
-        tokenExchange = await exchangeCode(false);
-      }
-
-      if (!tokenExchange.ok || !tokenExchange.json.access_token) {
-        throw new Error(
-          tokenExchange.json.error?.message || 'Failed to exchange Instagram authorization code.'
-        );
-      }
-
-      let finalToken = tokenExchange.json.access_token;
-      let tokenType: WorkspaceConnection['tokenType'] = 'SYSTEM_USER';
-      let expiresAt: number | undefined = tokenExchange.json.expires_in
-        ? Date.now() + tokenExchange.json.expires_in * 1000
-        : undefined;
-
-      const appAccessToken = `${igEnv.appId}|${igEnv.appSecret}`;
-      const debugRes = await fetch(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/debug_token?input_token=${encodeURIComponent(
-          finalToken
-        )}&access_token=${encodeURIComponent(appAccessToken)}`
-      );
-      const debugJson = (await debugRes.json()) as {
-        data?: {
-          is_valid?: boolean;
-          type?: string;
-          expires_at?: number;
-          scopes?: string[];
-          granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
-          error?: { message?: string };
-        };
-      };
-
-      if (debugJson.data) {
-        if (debugJson.data.is_valid === false) {
-          throw new Error(debugJson.data.error?.message || 'Meta returned an invalid access token.');
-        }
-
-        const metaType = (debugJson.data.type || '').toUpperCase();
-        if (metaType === 'SYSTEM_USER') {
-          tokenType = 'SYSTEM_USER';
-          expiresAt =
-            debugJson.data.expires_at && debugJson.data.expires_at > 0
-              ? debugJson.data.expires_at * 1000
-              : undefined;
-        } else {
-          tokenType = 'USER';
-          const remainingSec = debugJson.data.expires_at
-            ? debugJson.data.expires_at - Math.floor(Date.now() / 1000)
-            : tokenExchange.json.expires_in || 0;
-
-          if (remainingSec > 0 && remainingSec < 7 * 86400) {
-            const llParams = new URLSearchParams({
-              grant_type: 'fb_exchange_token',
-              client_id: igEnv.appId,
-              client_secret: igEnv.appSecret,
-              fb_exchange_token: finalToken,
-            });
-            const llRes = await fetch(
-              `https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token?${llParams.toString()}`
-            );
-            const llData = (await llRes.json()) as { access_token?: string; expires_in?: number };
-            if (llData.access_token) {
-              finalToken = llData.access_token;
-              expiresAt = llData.expires_in
-                ? Date.now() + llData.expires_in * 1000
-                : Date.now() + 60 * 86400 * 1000;
-            }
-          } else if (debugJson.data.expires_at && debugJson.data.expires_at > 0) {
-            expiresAt = debugJson.data.expires_at * 1000;
-          }
+        if (llRes.ok && llData.access_token) {
+          finalToken = llData.access_token;
+          expiresAt = Date.now() + (llData.expires_in || 60 * 86400) * 1000;
         }
       }
 
-      let igAccount: { id: string; username?: string; name?: string } | undefined;
+      // Step 3: Discover connected Instagram Business/Creator Account via Facebook Graph API
+      let igAccount: { id: string; username?: string; name?: string } | null = null;
 
+      // 3A. Assigned Instagram accounts (standard for Meta Login for Business / System User tokens)
       const assignedRes = await fetch(
-        `https://graph.facebook.com/${META_GRAPH_VERSION}/me/assigned_instagram_accounts?fields=id,username,name`,
+        `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/me/assigned_instagram_accounts?fields=id,username,name`,
         {
           headers: { Authorization: `Bearer ${finalToken}` },
         }
       );
-      const assignedData = (await assignedRes.json()) as {
-        data?: Array<{ id: string; username?: string; name?: string }>;
-      };
-      if (assignedRes.ok && assignedData.data && assignedData.data.length > 0) {
-        igAccount = assignedData.data[0];
-      }
-
-      if (!igAccount && debugJson.data?.granular_scopes) {
-        const publishScope = debugJson.data.granular_scopes.find(
-          (g) =>
-            (g.scope === 'instagram_content_publish' || g.scope === 'instagram_basic') &&
-            Array.isArray(g.target_ids) &&
-            g.target_ids.length > 0
-        );
-        const candidateId = publishScope?.target_ids?.[0];
-        if (candidateId) {
-          const igNodeRes = await fetch(
-            `https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(
-              candidateId
-            )}?fields=id,username,name`,
-            {
-              headers: { Authorization: `Bearer ${finalToken}` },
-            }
-          );
-          const igNode = (await igNodeRes.json()) as { id?: string; username?: string; name?: string };
-          if (igNodeRes.ok && igNode.id) {
-            igAccount = { id: igNode.id, username: igNode.username, name: igNode.name };
-          }
+      if (assignedRes.ok) {
+        const assignedData = (await assignedRes.json().catch(() => ({}))) as {
+          data?: Array<{ id?: string; username?: string; name?: string }>;
+        };
+        const firstAssigned = assignedData.data?.find((item) => Boolean(item?.id));
+        if (firstAssigned?.id) {
+          igAccount = {
+            id: String(firstAssigned.id),
+            username: firstAssigned.username,
+            name: firstAssigned.name,
+          };
         }
       }
 
+      // 3B. Fallback to Facebook Pages with linked instagram_business_account
       if (!igAccount) {
         const pagesRes = await fetch(
-          `https://graph.facebook.com/${META_GRAPH_VERSION}/me/accounts?fields=name,instagram_business_account{id,username,name}`,
+          `${META_GRAPH_HOST}/${META_GRAPH_VERSION}/me/accounts?fields=id,name,instagram_business_account{id,username,name}`,
           {
             headers: { Authorization: `Bearer ${finalToken}` },
           }
         );
-        const pagesData = (await pagesRes.json()) as {
+        const pagesData = (await pagesRes.json().catch(() => ({}))) as {
           data?: Array<{
-            name: string;
-            instagram_business_account?: { id: string; username?: string; name?: string };
+            id?: string;
+            name?: string;
+            instagram_business_account?: { id?: string; username?: string; name?: string };
           }>;
+          error?: { message?: string };
         };
-        igAccount = pagesData.data?.find((p) => p.instagram_business_account)?.instagram_business_account;
+        if (!pagesRes.ok && pagesData.error?.message) {
+          throw new Error(pagesData.error.message);
+        }
+        const pageWithIg = pagesData.data?.find((p) => Boolean(p.instagram_business_account?.id));
+        if (pageWithIg?.instagram_business_account?.id) {
+          igAccount = {
+            id: String(pageWithIg.instagram_business_account.id),
+            username: pageWithIg.instagram_business_account.username,
+            name: pageWithIg.instagram_business_account.name || pageWithIg.name,
+          };
+        }
       }
 
       if (!igAccount) {
         throw new Error(
-          'No Instagram Professional (Business or Creator) account was shared during Unified Login. Ensure the Instagram account is selected in the Meta consent prompt and assigned in your Business Portfolio.'
+          'No Instagram Professional (Business or Creator) account was returned by Meta Unified Login. Confirm the Instagram account is linked to your Business portfolio or Facebook Page and selected during login.'
         );
       }
 
@@ -1623,7 +1749,7 @@ export function registerSocialIntegrations(app: Express) {
         accountName,
         accountHandle: igAccount.username,
         accessToken: finalToken,
-        tokenType,
+        tokenType: resolvedTokenType,
         expiresAt,
         lastError: undefined,
         connectedAt: nowIso,
@@ -1639,8 +1765,8 @@ export function registerSocialIntegrations(app: Express) {
       });
 
       return res.send(
-        `<html><body style="background:#09090b;color:#fafafa;font-family:sans-serif;padding:24px;"><p>Instagram connected (@${escapeHtml(
-          igAccount.username || accountName
+        `<html><body style="background:#09090b;color:#fafafa;font-family:sans-serif;padding:24px;"><p>Instagram connected (${escapeHtml(
+          igAccount.username ? `@${igAccount.username}` : accountName
         )}). Closing window...</p><script>if(window.opener){window.opener.postMessage(${payload},'*');window.close();}</script></body></html>`
       );
     } catch (err) {

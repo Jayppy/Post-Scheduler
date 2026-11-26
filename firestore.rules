@@ -35,6 +35,12 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(userId));
     }
 
+    function isBoundedStringList(arr, maxItems, maxItemLen) {
+      return arr is list
+        && arr.size() <= maxItems
+        && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= maxItemLen));
+    }
+
     // 3. Entity Validation Blueprints (Synchronized 1:1 with firebase-blueprint.json)
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'displayName', 'role', 'createdAt', 'updatedAt'])
@@ -152,6 +158,273 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidMarketingProfile(data) {
+      return data.keys().hasAll([
+          'ownerId', 'profileId', 'businessName', 'websiteUrl', 'brandVoice',
+          'positioning', 'servicesJson', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'profileId', 'businessName', 'websiteUrl', 'brandVoice',
+          'positioning', 'pricingSummary', 'contactSummary', 'servicesJson',
+          'icpJson', 'proofJson', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.profileId is string && data.profileId.size() >= 1 && data.profileId.size() <= 80 && data.profileId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 160
+        && data.websiteUrl is string && data.websiteUrl.size() <= 300
+        && data.brandVoice is string && data.brandVoice.size() <= 2000
+        && data.positioning is string && data.positioning.size() <= 3000
+        && (!('pricingSummary' in data) || (data.pricingSummary is string && data.pricingSummary.size() <= 2000))
+        && (!('contactSummary' in data) || (data.contactSummary is string && data.contactSummary.size() <= 2000))
+        && data.servicesJson is string && data.servicesJson.size() <= 24000
+        && (!('icpJson' in data) || (data.icpJson is string && data.icpJson.size() <= 20000))
+        && (!('proofJson' in data) || (data.proofJson is string && data.proofJson.size() <= 20000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMarketingResearchSource(data) {
+      return data.keys().hasAll([
+          'ownerId', 'sourceId', 'sourceName', 'sourceUrl', 'category', 'dataClassification',
+          'accessMethod', 'accessedAt', 'primaryOrSecondary', 'confidence', 'finding', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'sourceId', 'sourceName', 'sourceUrl', 'category', 'dataClassification',
+          'accessMethod', 'publicationDate', 'accessedAt', 'freshnessLabel', 'primaryOrSecondary',
+          'confidence', 'usageRestrictions', 'finding', 'implications', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.sourceId is string && data.sourceId.size() >= 1 && data.sourceId.size() <= 128 && data.sourceId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.sourceName is string && data.sourceName.size() >= 1 && data.sourceName.size() <= 200
+        && data.sourceUrl is string && data.sourceUrl.size() <= 600
+        && data.category in ['industry-report', 'charts-discovery', 'audience-insight', 'buyer-objection', 'platform-trend']
+        && data.dataClassification in ['current', 'historical', 'emerging-pattern', 'verified-fact', 'interpretation', 'hypothesis']
+        && data.accessMethod in ['live-web-search', 'official-reference', 'owner-supplied', 'optional-api']
+        && (!('publicationDate' in data) || (data.publicationDate is string && data.publicationDate.size() <= 64))
+        && data.accessedAt is string && data.accessedAt.size() <= 64
+        && (!('freshnessLabel' in data) || (data.freshnessLabel is string && data.freshnessLabel.size() <= 80))
+        && data.primaryOrSecondary in ['primary', 'secondary']
+        && data.confidence in ['high', 'medium', 'low']
+        && (!('usageRestrictions' in data) || (data.usageRestrictions is string && data.usageRestrictions.size() <= 400))
+        && data.finding is string && data.finding.size() >= 1 && data.finding.size() <= 4000
+        && (!('implications' in data) || (data.implications is string && data.implications.size() <= 2000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMarketingContentDraft(data) {
+      return data.keys().hasAll([
+          'ownerId', 'draftId', 'title', 'status', 'targetAudience', 'serviceOffer',
+          'contentCategory', 'topic', 'centralConceptJson', 'linkedinContent',
+          'xShortContent', 'xExpandedContent', 'threadsContent', 'blogJson',
+          'evidenceClaimsJson', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'draftId', 'title', 'status', 'targetAudience', 'serviceOffer',
+          'objective', 'awarenessStage', 'contentCategory', 'topic', 'tone', 'ctaObjective',
+          'researchDepth', 'xTargetChars', 'blogWordTarget', 'centralConceptJson',
+          'linkedinContent', 'xShortContent', 'xExpandedContent', 'threadsContent',
+          'blogJson', 'evidenceClaimsJson', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.draftId is string && data.draftId.size() >= 1 && data.draftId.size() <= 128 && data.draftId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 240
+        && data.status in ['draft', 'reviewed', 'ready-to-copy', 'archived']
+        && data.targetAudience is string && data.targetAudience.size() <= 160
+        && data.serviceOffer is string && data.serviceOffer.size() <= 200
+        && (!('objective' in data) || (data.objective is string && data.objective.size() <= 240))
+        && (!('awarenessStage' in data) || (data.awarenessStage is string && data.awarenessStage.size() <= 120))
+        && data.contentCategory is string && data.contentCategory.size() <= 120
+        && data.topic is string && data.topic.size() <= 400
+        && (!('tone' in data) || (data.tone is string && data.tone.size() <= 120))
+        && (!('ctaObjective' in data) || (data.ctaObjective is string && data.ctaObjective.size() <= 240))
+        && (!('researchDepth' in data) || (data.researchDepth in ['standard', 'deep']))
+        && (!('xTargetChars' in data) || (data.xTargetChars is number && data.xTargetChars >= 20 && data.xTargetChars <= 280))
+        && (!('blogWordTarget' in data) || (data.blogWordTarget is number && data.blogWordTarget >= 400 && data.blogWordTarget <= 3000))
+        && data.centralConceptJson is string && data.centralConceptJson.size() <= 16000
+        && data.linkedinContent is string && data.linkedinContent.size() <= 12000
+        && data.xShortContent is string && data.xShortContent.size() <= 1000
+        && data.xExpandedContent is string && data.xExpandedContent.size() <= 6000
+        && data.threadsContent is string && data.threadsContent.size() <= 6000
+        && data.blogJson is string && data.blogJson.size() <= 36000
+        && data.evidenceClaimsJson is string && data.evidenceClaimsJson.size() <= 20000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Workspace B (74 STUDIO Sales Intelligence) & Shared AI Workspace Config Blueprints ---
+    function isValidSalesProfile(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'profileId', 'businessName', 'websiteUrl',
+          'positioning', 'pricingPolicy', 'serviceNames', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'profileId', 'businessName', 'websiteUrl',
+          'brandVoice', 'positioning', 'pricingPolicy', 'contactSummary',
+          'qualificationCriteria', 'approvedMessagingNotes', 'serviceNames', 'knownUrls',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId == 'ws-74-studio-sales'
+        && data.profileId is string && data.profileId.size() >= 1 && data.profileId.size() <= 80 && data.profileId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 160
+        && data.websiteUrl is string && data.websiteUrl.size() <= 300
+        && (!('brandVoice' in data) || (data.brandVoice is string && data.brandVoice.size() <= 1500))
+        && data.positioning is string && data.positioning.size() <= 2500
+        && data.pricingPolicy is string && data.pricingPolicy.size() <= 1500
+        && (!('contactSummary' in data) || (data.contactSummary is string && data.contactSummary.size() <= 1000))
+        && (!('qualificationCriteria' in data) || (data.qualificationCriteria is string && data.qualificationCriteria.size() <= 2000))
+        && (!('approvedMessagingNotes' in data) || (data.approvedMessagingNotes is string && data.approvedMessagingNotes.size() <= 2000))
+        && isBoundedStringList(data.serviceNames, 20, 200)
+        && (!('knownUrls' in data) || isBoundedStringList(data.knownUrls, 25, 300))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSalesLead(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'leadId', 'name', 'segment', 'buyerIntentLevel',
+          'qualificationScore', 'opportunityScore', 'stage', 'painPoints',
+          'buyerIntentSignals', 'recommendedServices', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'leadId', 'name', 'handleOrOrg', 'contactChannel',
+          'segment', 'channelSource', 'releaseOrProjectContext', 'rawInquiryNotes',
+          'researchSummary', 'painPoints', 'buyerIntentLevel', 'buyerIntentSignals',
+          'qualificationScore', 'qualificationRationale', 'opportunityScore',
+          'recommendedServices', 'recommendedNextStep', 'stage',
+          'lastAiProvider', 'lastAiModel', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId == 'ws-74-studio-sales'
+        && data.leadId is string && data.leadId.size() >= 1 && data.leadId.size() <= 128 && data.leadId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && (!('handleOrOrg' in data) || (data.handleOrOrg is string && data.handleOrOrg.size() <= 160))
+        && (!('contactChannel' in data) || (data.contactChannel is string && data.contactChannel.size() <= 120))
+        && data.segment in [
+          'Independent recording artist', 'Established recording artist', 'Music producer',
+          'Beatmaker', 'Songwriter', 'Record label', 'Music manager', 'Music business'
+        ]
+        && (!('channelSource' in data) || (data.channelSource is string && data.channelSource.size() <= 120))
+        && (!('releaseOrProjectContext' in data) || (data.releaseOrProjectContext is string && data.releaseOrProjectContext.size() <= 2000))
+        && (!('rawInquiryNotes' in data) || (data.rawInquiryNotes is string && data.rawInquiryNotes.size() <= 5000))
+        && (!('researchSummary' in data) || (data.researchSummary is string && data.researchSummary.size() <= 4000))
+        && isBoundedStringList(data.painPoints, 15, 300)
+        && data.buyerIntentLevel in ['high', 'medium', 'low', 'exploratory']
+        && isBoundedStringList(data.buyerIntentSignals, 15, 300)
+        && data.qualificationScore is number && data.qualificationScore >= 0 && data.qualificationScore <= 100
+        && (!('qualificationRationale' in data) || (data.qualificationRationale is string && data.qualificationRationale.size() <= 2000))
+        && data.opportunityScore is number && data.opportunityScore >= 0 && data.opportunityScore <= 100
+        && isBoundedStringList(data.recommendedServices, 10, 160)
+        && (!('recommendedNextStep' in data) || (data.recommendedNextStep is string && data.recommendedNextStep.size() <= 500))
+        && data.stage in ['new-lead', 'researched', 'qualified', 'proposal-sent', 'follow-up', 'won', 'archived']
+        && (!('lastAiProvider' in data) || (data.lastAiProvider in ['gemini', 'groq', 'openrouter', 'cloudflare', 'fallback']))
+        && (!('lastAiModel' in data) || (data.lastAiModel is string && data.lastAiModel.size() <= 160))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSalesOutput(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'outputId', 'leadId', 'leadName', 'outputType',
+          'title', 'contentMarkdown', 'providerId', 'model', 'wasFallback', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'outputId', 'leadId', 'leadName', 'outputType',
+          'title', 'contentMarkdown', 'manifestStatus', 'totalExpectedSections',
+          'completedSections', 'duplicateHeadingsDetected',
+          'providerId', 'model', 'wasFallback', 'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId == 'ws-74-studio-sales'
+        && data.outputId is string && data.outputId.size() >= 1 && data.outputId.size() <= 128 && data.outputId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.leadId is string && data.leadId.size() >= 1 && data.leadId.size() <= 128
+        && data.leadName is string && data.leadName.size() >= 1 && data.leadName.size() <= 160
+        && data.outputType in ['personalized-response', 'proposal', 'follow-up', 'sales-campaign-intel']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 240
+        && data.contentMarkdown is string && data.contentMarkdown.size() <= 36000
+        && (!('manifestStatus' in data) || (data.manifestStatus in ['incomplete', 'complete', 'verified']))
+        && (!('totalExpectedSections' in data) || (data.totalExpectedSections is number && data.totalExpectedSections >= 0 && data.totalExpectedSections <= 25))
+        && (!('completedSections' in data) || (data.completedSections is number && data.completedSections >= 0 && data.completedSections <= 25))
+        && (!('duplicateHeadingsDetected' in data) || isBoundedStringList(data.duplicateHeadingsDetected, 20, 200))
+        && data.providerId in ['gemini', 'groq', 'openrouter', 'cloudflare', 'fallback']
+        && data.model is string && data.model.size() <= 160
+        && data.wasFallback is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSalesActivity(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'activityId', 'activityType', 'summary', 'timestamp', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'activityId', 'leadId', 'leadName', 'activityType',
+          'summary', 'detail', 'providerId', 'model', 'timestamp', 'createdAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId == 'ws-74-studio-sales'
+        && data.activityId is string && data.activityId.size() >= 1 && data.activityId.size() <= 128 && data.activityId.matches('^[a-zA-Z0-9_\\-]+$')
+        && (!('leadId' in data) || (data.leadId is string && data.leadId.size() <= 128))
+        && (!('leadName' in data) || (data.leadName is string && data.leadName.size() <= 160))
+        && data.activityType in [
+          'lead-created', 'lead-researched', 'lead-qualified', 'response-generated',
+          'proposal-generated', 'follow-up-drafted', 'campaign-intel-generated', 'stage-updated'
+        ]
+        && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 300
+        && (!('detail' in data) || (data.detail is string && data.detail.size() <= 800))
+        && (!('providerId' in data) || (data.providerId in ['gemini', 'groq', 'openrouter', 'cloudflare', 'fallback']))
+        && (!('model' in data) || (data.model is string && data.model.size() <= 160))
+        && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 64
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAiWorkspaceConfig(data) {
+      return data.keys().hasAll([
+          'ownerId', 'workspaceId', 'workspaceLabel', 'providerOrder',
+          'geminiEnabled', 'groqEnabled', 'openrouterEnabled', 'cloudflareEnabled',
+          'maxOutputTokens', 'requestTimeoutMs', 'streamingEnabled',
+          'dailyRequestBudget', 'dailyTokenBudget', 'warningThresholdPct',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'workspaceId', 'workspaceLabel', 'providerOrder',
+          'geminiEnabled', 'groqEnabled', 'openrouterEnabled', 'cloudflareEnabled',
+          'geminiModel', 'groqModel', 'openrouterModel', 'cloudflareModel',
+          'maxOutputTokens', 'requestTimeoutMs', 'streamingEnabled',
+          'dailyRequestBudget', 'dailyTokenBudget', 'warningThresholdPct',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId == request.auth.uid
+        && data.workspaceId in ['ws-behind-the-release', 'ws-74-studio-sales']
+        && data.workspaceLabel is string && data.workspaceLabel.size() >= 1 && data.workspaceLabel.size() <= 120
+        && isBoundedStringList(data.providerOrder, 4, 30)
+        && data.geminiEnabled is bool
+        && data.groqEnabled is bool
+        && data.openrouterEnabled is bool
+        && data.cloudflareEnabled is bool
+        && (!('geminiModel' in data) || (data.geminiModel is string && data.geminiModel.size() <= 120))
+        && (!('groqModel' in data) || (data.groqModel is string && data.groqModel.size() <= 120))
+        && (!('openrouterModel' in data) || (data.openrouterModel is string && data.openrouterModel.size() <= 120))
+        && (!('cloudflareModel' in data) || (data.cloudflareModel is string && data.cloudflareModel.size() <= 120))
+        && data.maxOutputTokens is number && data.maxOutputTokens >= 256 && data.maxOutputTokens <= 16384
+        && data.requestTimeoutMs is number && data.requestTimeoutMs >= 3000 && data.requestTimeoutMs <= 120000
+        && data.streamingEnabled is bool
+        && data.dailyRequestBudget is number && data.dailyRequestBudget >= 1 && data.dailyRequestBudget <= 50000
+        && data.dailyTokenBudget is number && data.dailyTokenBudget >= 1000 && data.dailyTokenBudget <= 50000000
+        && data.warningThresholdPct is number && data.warningThresholdPct >= 10 && data.warningThresholdPct <= 99
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // 4. Collection Rules
     match /users/{userId} {
       // PII protected: strictly single-owner get only (no blanket read or list)
@@ -259,6 +532,236 @@ service cloud.firestore {
         // Append-only audit log
         allow update: if false;
         allow delete: if isValidId(userId) && isValidId(historyId) && isOwner(userId);
+      }
+
+      match /marketingProfiles/{profileId} {
+        allow get: if isValidId(userId) && isValidId(profileId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(profileId)
+          && isOwner(userId)
+          && isValidMarketingProfile(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(profileId)
+          && isOwner(userId)
+          && isValidMarketingProfile(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().profileId == existing().profileId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'businessName', 'websiteUrl', 'brandVoice', 'positioning',
+            'pricingSummary', 'contactSummary', 'servicesJson', 'icpJson', 'proofJson', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(profileId) && isOwner(userId);
+      }
+
+      match /researchSources/{sourceId} {
+        allow get: if isValidId(userId) && isValidId(sourceId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(sourceId)
+          && isOwner(userId)
+          && isValidMarketingResearchSource(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(sourceId)
+          && isOwner(userId)
+          && isValidMarketingResearchSource(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().sourceId == existing().sourceId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'sourceName', 'sourceUrl', 'category', 'dataClassification', 'accessMethod',
+            'publicationDate', 'accessedAt', 'freshnessLabel', 'primaryOrSecondary',
+            'confidence', 'usageRestrictions', 'finding', 'implications', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(sourceId) && isOwner(userId);
+      }
+
+      match /marketingDrafts/{draftId} {
+        allow get: if isValidId(userId) && isValidId(draftId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(draftId)
+          && isOwner(userId)
+          && isValidMarketingContentDraft(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(draftId)
+          && isOwner(userId)
+          && isValidMarketingContentDraft(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().draftId == existing().draftId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'status', 'targetAudience', 'serviceOffer', 'objective', 'awarenessStage',
+            'contentCategory', 'topic', 'tone', 'ctaObjective', 'researchDepth',
+            'xTargetChars', 'blogWordTarget', 'centralConceptJson', 'linkedinContent',
+            'xShortContent', 'xExpandedContent', 'threadsContent', 'blogJson',
+            'evidenceClaimsJson', 'createdAt', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(draftId) && isOwner(userId);
+      }
+
+      // --- Workspace B: 74 STUDIO Sales Intelligence Collections ---
+      match /salesProfiles/{profileId} {
+        allow get: if isValidId(userId) && isValidId(profileId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(profileId)
+          && isOwner(userId)
+          && isValidSalesProfile(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(profileId)
+          && isOwner(userId)
+          && isValidSalesProfile(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().profileId == existing().profileId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'businessName', 'websiteUrl', 'brandVoice', 'positioning', 'pricingPolicy',
+            'contactSummary', 'qualificationCriteria', 'approvedMessagingNotes',
+            'serviceNames', 'knownUrls', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(profileId) && isOwner(userId);
+      }
+
+      match /salesLeads/{leadId} {
+        allow get: if isValidId(userId) && isValidId(leadId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(leadId)
+          && isOwner(userId)
+          && isValidSalesLead(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(leadId)
+          && isOwner(userId)
+          && isValidSalesLead(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().leadId == existing().leadId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'handleOrOrg', 'contactChannel', 'segment', 'channelSource',
+            'releaseOrProjectContext', 'rawInquiryNotes', 'researchSummary', 'painPoints',
+            'buyerIntentLevel', 'buyerIntentSignals', 'qualificationScore', 'qualificationRationale',
+            'opportunityScore', 'recommendedServices', 'recommendedNextStep', 'stage',
+            'lastAiProvider', 'lastAiModel', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(leadId) && isOwner(userId);
+      }
+
+      match /salesOutputs/{outputId} {
+        allow get: if isValidId(userId) && isValidId(outputId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(outputId)
+          && isOwner(userId)
+          && isValidSalesOutput(incoming())
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(outputId)
+          && isOwner(userId)
+          && isValidSalesOutput(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().outputId == existing().outputId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'contentMarkdown', 'manifestStatus', 'totalExpectedSections',
+            'completedSections', 'duplicateHeadingsDetected',
+            'providerId', 'model', 'wasFallback', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(outputId) && isOwner(userId);
+      }
+
+      match /salesActivities/{activityId} {
+        allow get: if isValidId(userId) && isValidId(activityId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(activityId)
+          && isOwner(userId)
+          && isValidSalesActivity(incoming())
+          && incoming().createdAt == request.time
+          && userExists(userId);
+
+        // Append-only Sales Intelligence activity log
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(activityId) && isOwner(userId);
+      }
+
+      // --- Shared Per-Workspace AI Profile Config (Sanitized, Zero Secrets) ---
+      match /aiWorkspaceConfigs/{workspaceId} {
+        allow get: if isValidId(userId) && isValidId(workspaceId) && isOwner(userId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(workspaceId)
+          && isOwner(userId)
+          && isValidAiWorkspaceConfig(incoming())
+          && incoming().workspaceId == workspaceId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && userExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(workspaceId)
+          && isOwner(userId)
+          && isValidAiWorkspaceConfig(incoming())
+          && incoming().ownerId == existing().ownerId
+          && incoming().workspaceId == existing().workspaceId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'workspaceLabel', 'providerOrder', 'geminiEnabled', 'groqEnabled',
+            'openrouterEnabled', 'cloudflareEnabled', 'geminiModel', 'groqModel',
+            'openrouterModel', 'cloudflareModel', 'maxOutputTokens', 'requestTimeoutMs',
+            'streamingEnabled', 'dailyRequestBudget', 'dailyTokenBudget',
+            'warningThresholdPct', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(userId) && isValidId(workspaceId) && isOwner(userId);
       }
     }
   }

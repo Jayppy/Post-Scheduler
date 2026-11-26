@@ -21,3 +21,8 @@
 10. **Denial-of-Wallet Oversized String**: Setting `caption` > 2500 chars or `hashtags` > 30 items or non-string first hashtag `[123]` -> `PERMISSION_DENIED`.
 11. **Query Trust Bypass**: Listing `/users/u1/scheduledJobs` without matching `ownerId == request.auth.uid` or as user `u2` -> `PERMISSION_DENIED`.
 12. **Audit Log Tampering**: Updating an existing `/users/u1/publishHistory/hist_1` record to hide a `"failed"` status -> `PERMISSION_DENIED`.
+13. **Marketing Content Isolation**: Reading or writing `/users/u1/marketingDrafts/*`, `/users/u1/researchSources/*`, or `/users/u1/marketingProfiles/*` by user `u2` or unauthenticated client -> `PERMISSION_DENIED`.
+14. **Sales Intelligence Workspace Isolation**: Creating a `SalesLead` or `SalesOutput` with `workspaceId != 'ws-74-studio-sales'` or by user `u2` -> `PERMISSION_DENIED`.
+15. **Sales Activity Audit Immutability**: Updating an existing `/users/u1/salesActivities/act_1` record -> `PERMISSION_DENIED` (`allow update: if false`).
+16. **AI Workspace Config Secret Exclusion**: Writing ghost fields (`apiKey`, `secret`, `rawLogs`) to `/users/u1/aiWorkspaceConfigs/ws-74-studio-sales` -> `PERMISSION_DENIED` via `hasOnly`.
+17. **Cross-Tenant Sales Profile Forgery**: Reading/writing `/users/u1/salesProfiles/*` with `ownerId: 'u2'` -> `PERMISSION_DENIED`.

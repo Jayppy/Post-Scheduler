@@ -408,7 +408,7 @@ export const CarouselEditorView: React.FC = () => {
         title: project.title,
         platform: 'instagram-carousel',
         caption: carousel.suggestedCaption || `${project.title} — created in ${activeWorkspace.name}.`,
-        hashtags: carousel.suggestedHashtags || ['#74Studio', '#MusicIndustry'],
+        hashtags: carousel.suggestedHashtags || ['#BehindTheRelease', '#MusicIndustry'],
         mediaAssetIds: savedAssets.map((a) => a.id),
         sourceProjectId: project.id,
       });
@@ -434,7 +434,7 @@ export const CarouselEditorView: React.FC = () => {
         title: project.title,
         platform: 'instagram-carousel',
         caption: carousel.suggestedCaption || project.title,
-        hashtags: carousel.suggestedHashtags || ['#74Studio'],
+        hashtags: carousel.suggestedHashtags || ['#BehindTheRelease'],
         mediaAssetIds: savedAssets.map((a) => a.id),
         scheduledDate: calDate,
         scheduledTime: calTime,

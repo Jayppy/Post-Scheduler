@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
+  ActiveBusinessWorkspace,
   Campaign,
   CreativeProject,
   CreativeStudioSubView,
@@ -7,12 +8,15 @@ import {
   EditingPreset,
   ExportRecord,
   MainNavSection,
+  MarketingSubView,
   MediaAsset,
+  SalesSubView,
   SocialPlatform,
   SocialPost,
   Workspace,
   YouTubePrivacyStatus,
 } from '../types/studio';
+import { BEHIND_THE_RELEASE_WORKSPACE_ID } from '../data/presets';
 import { createId, studioStorage } from '../services/storage';
 import { deleteMediaBlob, putMediaBlob } from '../services/idb';
 import { integrationsClient } from '../services/integrationsClient';
@@ -62,10 +66,17 @@ interface StudioContextValue {
   updateWorkspace: (ws: Workspace) => void;
   createWorkspace: (ws: Omit<Workspace, 'id' | 'createdAt'>) => Workspace;
 
+  activeBusinessWorkspace: ActiveBusinessWorkspace;
+  switchBusinessWorkspace: (ws: ActiveBusinessWorkspace) => void;
+
   navSection: MainNavSection;
   setNavSection: (section: MainNavSection) => void;
   studioSubView: CreativeStudioSubView;
   setStudioSubView: (sub: CreativeStudioSubView) => void;
+  marketingSubView: MarketingSubView;
+  setMarketingSubView: (sub: MarketingSubView) => void;
+  salesSubView: SalesSubView;
+  setSalesSubView: (sub: SalesSubView) => void;
 
   themes: DesignTheme[];
   workspaceThemes: DesignTheme[];
@@ -127,8 +138,13 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user, syncFromServerSnapshot } = useFirebase();
   const [workspaces, setWorkspaces] = useState<Workspace[]>(() => studioStorage.loadWorkspaces());
   const [activeWorkspaceId, setActiveWsId] = useState<string>(() => studioStorage.loadActiveWorkspaceId());
-  const [navSection, setNavSection] = useState<MainNavSection>('creative-studio');
+  const [activeBusinessWorkspace, setActiveBusinessWorkspace] = useState<ActiveBusinessWorkspace>(
+    'behind-the-release'
+  );
+  const [navSection, setNavSection] = useState<MainNavSection>('hub-overview');
   const [studioSubView, setStudioSubView] = useState<CreativeStudioSubView>('overview');
+  const [marketingSubView, setMarketingSubView] = useState<MarketingSubView>('dashboard');
+  const [salesSubView, setSalesSubView] = useState<SalesSubView>('dashboard');
 
   const [themes, setThemes] = useState<DesignTheme[]>(() => studioStorage.loadThemes());
   const [editingPresets, setEditingPresets] = useState<EditingPreset[]>(() =>
@@ -200,27 +216,36 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const setActiveWorkspaceId = useCallback(
-    (id: string) => {
-      setActiveWsId(id);
+    (_id: string) => {
+      setActiveWsId(BEHIND_THE_RELEASE_WORKSPACE_ID);
       setActiveProjectId(null);
       setComposerDraft(null);
     },
     []
   );
 
-  const updateWorkspace = useCallback((ws: Workspace) => {
-    setWorkspaces((prev) => prev.map((w) => (w.id === ws.id ? ws : w)));
+  const switchBusinessWorkspace = useCallback((ws: ActiveBusinessWorkspace) => {
+    setActiveBusinessWorkspace(ws);
+    if (ws === '74-studio-sales') {
+      setNavSection('sales-intelligence');
+      setSalesSubView('dashboard');
+    } else {
+      setNavSection((prev) => (prev === 'sales-intelligence' ? 'hub-overview' : prev));
+    }
   }, []);
 
-  const createWorkspace = useCallback((ws: Omit<Workspace, 'id' | 'createdAt'>) => {
-    const newWs: Workspace = {
-      ...ws,
-      id: createId('ws'),
-      createdAt: new Date().toISOString(),
-    };
-    setWorkspaces((prev) => [...prev, newWs]);
-    return newWs;
+  const updateWorkspace = useCallback((ws: Workspace) => {
+    setWorkspaces((prev) =>
+      prev.map((w) => (w.id === BEHIND_THE_RELEASE_WORKSPACE_ID ? { ...ws, id: BEHIND_THE_RELEASE_WORKSPACE_ID } : w))
+    );
   }, []);
+
+  const createWorkspace = useCallback(
+    (_ws: Omit<Workspace, 'id' | 'createdAt'>) => {
+      return activeWorkspace;
+    },
+    [activeWorkspace]
+  );
 
   const workspaceThemes = useMemo(
     () => themes.filter((t) => t.workspaceId === 'global' || t.workspaceId === activeWorkspace.id),
@@ -299,7 +324,7 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const openProjectInEditor = useCallback((project: CreativeProject) => {
-    setActiveWsId(project.workspaceId);
+    setActiveWsId(BEHIND_THE_RELEASE_WORKSPACE_ID);
     setActiveProjectId(project.id);
     setNavSection('creative-studio');
     setStudioSubView(project.type === 'carousel' ? 'carousel-editor' : 'reels-studio');
@@ -551,10 +576,16 @@ export const StudioProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setActiveWorkspaceId,
         updateWorkspace,
         createWorkspace,
+        activeBusinessWorkspace,
+        switchBusinessWorkspace,
         navSection,
         setNavSection,
         studioSubView,
         setStudioSubView,
+        marketingSubView,
+        setMarketingSubView,
+        salesSubView,
+        setSalesSubView,
         themes,
         workspaceThemes,
         saveTheme,

@@ -1,0 +1,855 @@
+MAJOR APP RESTRUCTURE: 74 STUDIO SOCIAL HUB
+
+I want to restructure the existing application carefully. This is an existing, working application, not a request to build a new one from scratch.
+
+You must inspect the existing codebase, architecture, database schema, integrations, authentication, token storage, frontend components and backend routes before modifying anything.
+
+Your job is to implement three major changes:
+
+1. Completely remove the 74 STUDIO social-media workspace and its associated social-account integrations.
+2. Fix the YouTube connection persistence issue so connected accounts remain connected when users leave and return to the scheduler.
+3. Build a professional, research-driven 74 STUDIO Marketing Content Generator that produces platform-specific sales and marketing content for LinkedIn, X (Twitter), Threads and the 74-studio.com website.
+
+The existing Behind The Release workspace must remain fully functional.
+
+---
+
+# PART A — NON-NEGOTIABLE SAFETY REQUIREMENTS
+
+Before making changes:
+
+1. Inspect the complete application architecture.
+2. Identify all components, routes, database records, integrations and workspace-specific logic associated with 74 STUDIO.
+3. Identify all shared functionality used by Behind The Release.
+4. Identify the existing YouTube and Instagram OAuth flows.
+5. Identify how access tokens and refresh tokens are stored and retrieved.
+6. Identify the current publishing and scheduling workflow.
+7. Create a clear implementation plan before modifying files.
+
+Do not rebuild the application.
+
+Do not replace the existing database.
+
+Do not create a new Supabase project.
+
+Do not change the application's domain, deployment configuration or encryption architecture.
+
+Do not modify the working YouTube API integration except where necessary to fix the connection persistence issue.
+
+Do not break or replace the newly implemented Instagram Unified Login integration.
+
+Preserve the existing AES-256-GCM token encryption and the existing TOKEN_ENCRYPTION_KEY.
+
+Never expose, print, log or request actual API secrets, access tokens, refresh tokens or encryption keys.
+
+If a change risks breaking an existing integration, identify the risk and implement the smallest safe change.
+
+---
+
+# PART B — REMOVE THE 74 STUDIO SOCIAL-MEDIA WORKSPACE
+
+The application should have only ONE social-media publishing workspace:
+
+**BEHIND THE RELEASE**
+
+Remove the 74 STUDIO workspace entirely from the social-media management application.
+
+This includes:
+
+- Workspace selection options for 74 STUDIO.
+- The 74 STUDIO workspace dashboard.
+- Its social-account connection interface.
+- Its Instagram account connection.
+- Its YouTube account connection.
+- Its workspace-specific social publishing settings.
+- Its workspace-specific scheduled posts.
+- Its workspace-specific connected-account management.
+- Any workspace switching logic that exists exclusively to support the two-workspace arrangement.
+- Any obsolete UI, routes, labels, settings or navigation items that are only used by the 74 STUDIO social workspace.
+
+Remove references to the old workspace from the active user interface.
+
+IMPORTANT:
+
+Do not delete the 74 STUDIO brand identity, its website references or any assets required by the new Marketing Content Generator.
+
+The new content generator will create marketing content for 74 STUDIO as a business. This is a different feature from having a 74 STUDIO social publishing workspace.
+
+Do not destructively delete historical database records without first checking dependencies and creating a recoverable backup.
+
+After the refactor, the application should open directly into Behind The Release.
+
+The Behind The Release workspace must retain:
+
+- Its existing YouTube connections.
+- Its existing Instagram connection through Meta Unified Login.
+- Its existing connected-account management.
+- Its existing scheduling functionality.
+- Its existing manual Schedule & Send workflow.
+- Its existing post creation and editing functionality.
+- Its existing database relationships.
+- Its existing token encryption and security architecture.
+
+The user must still manually click Send Now when a scheduled post is ready to be published.
+
+Do not introduce automatic background publishing.
+
+---
+
+# PART C — FIX YOUTUBE CONNECTION PERSISTENCE
+
+There is an existing issue with YouTube authentication.
+
+When a YouTube account is connected successfully, it does not remain connected permanently. When the user leaves the scheduler and returns later, the application asks the user to reconnect the YouTube account.
+
+This must be investigated and fixed.
+
+Do not simply hide the reconnect button or keep the frontend showing a fake connected status.
+
+Investigate the entire authentication lifecycle.
+
+## C1. Inspect the OAuth implementation
+
+Inspect:
+
+- YouTube OAuth authorization URL.
+- Google OAuth scopes.
+- OAuth callback implementation.
+- Access-token exchange.
+- Refresh-token exchange.
+- Token persistence.
+- Database schema.
+- Token encryption and decryption.
+- Token expiration handling.
+- Connected-account status endpoint.
+- Frontend connected-account loading.
+- Workspace/account mapping.
+- Any session or browser-storage dependencies.
+
+Determine exactly why the account connection is not surviving application reloads.
+
+## C2. Implement proper refresh-token handling
+
+Verify that the YouTube OAuth flow requests offline access where appropriate.
+
+Use the correct Google OAuth parameters, including:
+
+- access_type=offline
+- Appropriate consent handling when a refresh token is genuinely missing.
+- The existing required YouTube API scopes.
+- Correct OAuth state validation.
+
+Do not unnecessarily force the consent screen every time a user returns.
+
+Persist the refresh token securely in the existing database using the current AES-256-GCM encryption architecture.
+
+IMPORTANT:
+
+Google may not return a new refresh token on every authorization. When a token refresh response does not include a new refresh token, preserve the previously stored valid refresh token.
+
+Do not accidentally overwrite an existing refresh token with null.
+
+## C3. Implement automatic access-token renewal
+
+When the access token expires:
+
+1. Retrieve the encrypted refresh token from the database.
+2. Decrypt it securely on the backend.
+3. Request a new access token from Google's token endpoint.
+4. Persist the updated access token and expiration information.
+5. Preserve the refresh token if Google does not issue a replacement.
+6. Continue using the connected YouTube account without requiring the user to log in again.
+
+If Google revokes a refresh token, the application should report the actual connection problem and request reauthorization.
+
+## C4. Fix frontend connection persistence
+
+When the user returns to the application:
+
+- Fetch connected-account status from the backend/database.
+- Do not rely exclusively on React state, browser memory, localStorage or sessionStorage.
+- Load the persisted account connection.
+- Display the correct connected status.
+- Show the correct YouTube channel.
+- Do not request reconnection simply because the page was refreshed or the browser was closed.
+- Ensure the connection is associated with Behind The Release.
+
+## C5. YouTube acceptance tests
+
+Test all of the following:
+
+1. Connect a YouTube account successfully.
+2. Refresh the application.
+3. Confirm that the account remains connected.
+4. Close and reopen the browser.
+5. Return to the application.
+6. Confirm that the account still appears connected.
+7. Simulate an expired access token and verify automatic refresh.
+8. Confirm that the refreshed token is persisted.
+9. Confirm that publishing still works.
+10. Confirm that an invalid or revoked refresh token produces a clear reauthorization message.
+
+Do not declare this fixed unless the persistence and refresh-token tests pass.
+
+---
+
+# PART D — BUILD THE 74 STUDIO MARKETING CONTENT GENERATOR
+
+Create a new, professional feature called:
+
+**74 STUDIO MARKETING INTELLIGENCE**
+
+Suggested navigation label:
+
+**Marketing Content Studio**
+
+This feature must be completely separate from Behind The Release's educational content strategy.
+
+The purpose is to generate persuasive, research-backed marketing content that attracts potential clients and creates qualified purchase intent for 74 STUDIO's services.
+
+The target audience includes:
+
+- Independent recording artists.
+- Established recording artists.
+- Music producers.
+- Beatmakers.
+- Songwriters.
+- Independent music entrepreneurs.
+- Record labels.
+- Music managers.
+- Artist development teams.
+- Music businesses.
+
+The content should address the real challenges, goals, buying motivations and decision-making processes of these audiences.
+
+The purpose is not simply to publish motivational music-industry posts.
+
+The purpose is to help potential customers understand a relevant problem, recognize the value of solving it, trust 74 STUDIO's expertise and take an appropriate next step.
+
+## D1. Build a research and intelligence engine
+
+The generator must not depend entirely on the language model's existing knowledge.
+
+It should use a research layer that gathers current and historical music-industry information.
+
+Research categories should include:
+
+### Music industry data
+
+Research:
+
+- Global recorded-music market developments.
+- Streaming industry developments.
+- Music consumption trends.
+- Music distribution trends.
+- Independent artist market developments.
+- Music marketing trends.
+- Music production trends.
+- Music industry revenue developments.
+- Independent artist growth challenges.
+- Emerging music business opportunities.
+- Changes in artist discovery and audience development.
+- Music technology developments.
+
+### Music charts and discovery
+
+Where reliable sources and permitted access are available, monitor:
+
+- Billboard charts.
+- Official Charts.
+- Spotify Charts.
+- Apple Music charts.
+- YouTube music charts.
+- Other reputable regional and international music charts.
+- Music discovery and streaming reports.
+
+Use these sources to identify meaningful patterns, not merely to repeat chart positions.
+
+Examples of useful analysis:
+
+- Emerging music genres.
+- Changes in music consumption.
+- Artists gaining traction.
+- Regional music developments.
+- Changes in audience discovery.
+- Market opportunities for independent artists.
+- Trends that affect the services offered by 74 STUDIO.
+
+Do not claim that chart movement proves a particular artist's buying intentions.
+
+### Audience and buyer intelligence
+
+Build an audience research system that investigates the needs and buying behaviour of:
+
+**Independent artists**
+- Difficulty getting their music noticed.
+- Difficulty developing a recognizable sound and brand.
+- Challenges with music promotion.
+- Poor release planning.
+- Limited knowledge of music distribution.
+- Difficulty building a sustainable music career.
+- Frustration with spending money on ineffective promotion.
+
+**Music producers**
+- Difficulty finding consistent clients.
+- Difficulty differentiating their production services.
+- Challenges communicating their value.
+- Difficulty turning production skills into a sustainable business.
+- Challenges building a professional reputation.
+- Difficulty finding artists who value professional production.
+
+**Songwriters and music entrepreneurs**
+- Difficulty monetizing their skills.
+- Challenges building industry relationships.
+- Difficulty positioning their services.
+- Challenges identifying commercially viable opportunities.
+
+Research the audience's:
+
+- Motivations.
+- Aspirations.
+- Frustrations.
+- Common objections.
+- Purchasing considerations.
+- Perceived risks.
+- Trust requirements.
+- Desired outcomes.
+- Decision-making processes.
+- Reasons for delaying a purchase.
+- Factors that increase confidence in a service provider.
+
+Use legitimate market research, industry reports, public discussions, surveys and reputable audience research.
+
+Do not invent psychological findings or pretend that anecdotal comments represent an entire industry.
+
+## D2. Buyer psychology and ethical persuasion
+
+Use established marketing and behavioural-science principles to improve content quality.
+
+Relevant frameworks include:
+
+- Customer pain-point analysis.
+- Jobs To Be Done.
+- Customer awareness stages.
+- Buyer journey mapping.
+- Problem-agitation-solution.
+- Value proposition design.
+- Social proof.
+- Authority and credibility.
+- Objection handling.
+- Risk reduction.
+- Loss aversion.
+- Decision friction.
+- Customer trust.
+- Purchase-intent signals.
+
+Use these principles responsibly.
+
+The content should make customers recognize genuine problems and understand useful solutions.
+
+Do not fabricate testimonials, client results, statistics, scarcity, guarantees or success stories.
+
+Do not exploit personal insecurities or use deceptive fear-based selling.
+
+The aim is credible persuasion, not manipulation.
+
+## D3. 74 STUDIO business intelligence
+
+Before generating content, inspect the existing project context and available 74 STUDIO information.
+
+Build a configurable business knowledge base containing:
+
+- 74 STUDIO's actual services.
+- Service descriptions.
+- Ideal customer profiles.
+- Value propositions.
+- Actual differentiators.
+- Existing portfolio and case studies.
+- Verified testimonials, if available.
+- Website information from https://74-studio.com.
+- Existing pricing information, if available.
+- Contact and enquiry methods.
+- Brand voice.
+- Business positioning.
+
+Do not invent services, prices, credentials, testimonials or business results.
+
+Use verified website information and business information supplied by the application owner.
+
+The generator must understand what 74 STUDIO actually offers before creating sales content.
+
+## D4. Content strategy engine
+
+Every content idea should have a clear strategic purpose.
+
+Content categories should include:
+
+1. Problem awareness.
+2. Industry education.
+3. Expert authority.
+4. Myth correction.
+5. Common mistakes.
+6. Buyer objection handling.
+7. Service education.
+8. Case-study storytelling.
+9. Industry trend analysis.
+10. Customer transformation.
+11. Service comparison and differentiation.
+12. Lead generation.
+13. Purchase-intent content.
+14. Brand positioning.
+15. Conversion-focused content.
+
+Each generated content idea should include:
+
+- Target audience.
+- Audience problem.
+- Customer awareness stage.
+- Strategic objective.
+- Core message.
+- Evidence or research supporting the message.
+- Recommended angle.
+- Appropriate call to action.
+
+Avoid generic content that could be published by any music business.
+
+The content must be relevant to 74 STUDIO's actual services and target customers.
+
+---
+
+# PART E — PLATFORM-SPECIFIC CONTENT GENERATION
+
+This is one of the most important requirements.
+
+One central content idea should be transformed into four platform-specific versions.
+
+The underlying message, central argument, facts and business objective must remain consistent.
+
+However, the writing, structure, length, formatting and CTA must be optimized for each platform.
+
+The system must not simply copy and paste the same post four times.
+
+## E1. LinkedIn
+
+Generate a professional LinkedIn post.
+
+Requirements:
+
+- Strong opening hook.
+- Professional but conversational tone.
+- Clear argument.
+- Relevant music-industry context.
+- Useful insights.
+- Readable paragraphs.
+- Appropriate line breaks.
+- Credible authority positioning.
+- Natural business relevance.
+- Appropriate CTA.
+
+The post should position 74 STUDIO as a knowledgeable and credible business.
+
+Avoid generic corporate language and excessive hashtags.
+
+## E2. X (Twitter)
+
+Generate an ultra-short X post.
+
+The requested default target is approximately 50 characters for the ultra-short version.
+
+Also provide an optional expanded version that fits the platform's current supported post length.
+
+Requirements:
+
+- One clear idea.
+- Immediate attention.
+- Concise language.
+- Strong wording.
+- Minimal unnecessary explanation.
+- Appropriate CTA where possible.
+
+The 50-character target must be configurable, not treated as a universal platform limit.
+
+## E3. Threads
+
+Generate a Threads-specific version.
+
+Requirements:
+
+- Conversational and natural.
+- Short, engaging paragraphs.
+- A strong opening thought.
+- Relevant industry observation.
+- Clear point of view.
+- Relatable examples.
+- Appropriate conversational CTA.
+
+Avoid making it sound like a formal LinkedIn article.
+
+## E4. 74-studio.com blog
+
+Generate a complete, professionally structured website article.
+
+Requirements:
+
+- SEO-focused title.
+- SEO meta description.
+- Primary keyword.
+- Secondary keywords.
+- Search intent.
+- Clear introduction.
+- Structured H2 and H3 headings.
+- Thorough explanations.
+- Relevant music-industry examples.
+- Evidence and source references.
+- Practical recommendations.
+- Natural integration of 74 STUDIO's relevant services.
+- Strong conclusion.
+- Appropriate conversion CTA.
+- Suggested internal links, where actual website URLs are known.
+- Suggested featured-image concept.
+
+The article should provide substantial value rather than simply expanding a short social-media post with filler.
+
+Use an adjustable default length of approximately 800–1,500 words, depending on the topic.
+
+SEO must never come at the expense of readability or factual accuracy.
+
+## E5. Cross-platform message consistency
+
+Every generation must preserve:
+
+- The same central argument.
+- The same core facts.
+- The same audience problem.
+- The same intended business outcome.
+- The same strategic positioning.
+
+However, each platform must receive its own writing structure.
+
+Create a shared content concept with four separate platform outputs.
+
+---
+
+# PART F — CONTENT GENERATOR USER INTERFACE
+
+Create a professional, modern interface that feels like an actual marketing intelligence platform.
+
+The generator should have the following sections:
+
+### 1. Marketing Dashboard
+
+Display:
+
+- Recent content generations.
+- Research updates.
+- Trending music-industry topics.
+- Recommended content opportunities.
+- Saved content ideas.
+- Content production activity.
+
+### 2. Research Intelligence
+
+Allow the user to view:
+
+- Industry reports.
+- Music chart developments.
+- Emerging trends.
+- Audience insights.
+- Buyer objections.
+- Customer needs.
+- Source links.
+- Publication dates.
+- Research freshness.
+
+### 3. Generate Content
+
+Provide a generation workflow where the user can select:
+
+- Target audience.
+- Business service or offer.
+- Content objective.
+- Audience awareness stage.
+- Content category.
+- Industry topic.
+- Preferred tone.
+- CTA objective.
+- Research depth.
+
+Allow the user to enter a custom topic or ask the system to discover a suitable content opportunity.
+
+The user must also be able to select automatic topic discovery.
+
+### 4. Cross-Platform Content Editor
+
+After generation, display four separate outputs:
+
+- LinkedIn.
+- X (Twitter).
+- Threads.
+- Website Blog.
+
+Each output must have:
+
+- Its own editable content field.
+- Character or word count.
+- Copy button.
+- Regenerate button.
+- Edit button.
+- Save Draft button.
+
+Allow the user to regenerate one platform's version without regenerating the other three.
+
+The central content idea must remain unchanged when regenerating an individual platform version.
+
+### 5. Research and Sources Panel
+
+Display the evidence used to create the content.
+
+For each important factual claim, show:
+
+- Source name.
+- Source URL.
+- Publication date.
+- Date accessed.
+- Relevant finding.
+- Whether the source is primary or secondary.
+- Confidence or evidence quality.
+
+Do not fabricate citations.
+
+If research cannot verify a claim, the generator must either omit it or clearly label it as an unverified hypothesis.
+
+### 6. Content Library
+
+Allow users to:
+
+- Save generated content.
+- Organize drafts.
+- Search previous generations.
+- Edit saved drafts.
+- Duplicate a content concept.
+- Delete drafts.
+- View generation dates.
+- Reuse previously researched topics.
+
+Keep this library separate from the Behind The Release publishing workspace.
+
+---
+
+# PART G — LIVE RESEARCH AND DATA INTEGRATION
+
+Design the research architecture so it can connect to reliable external data sources.
+
+Prioritize:
+
+- Official music-industry reports.
+- Official chart sources.
+- Spotify for Artists resources.
+- IFPI reports.
+- Luminate research, where available.
+- Chartmetric or Soundcharts, where an authorized API or subscription is available.
+- Official platform trend resources.
+- Reputable music-industry publications.
+- Publicly available research and surveys.
+
+Use official APIs or authorized data access wherever possible.
+
+Do not assume that a website provides an unrestricted API.
+
+Do not scrape websites in violation of their terms.
+
+Do not invent live data when an API or source is unavailable.
+
+Build a source management layer that records:
+
+- Source.
+- Data category.
+- Collection date.
+- Publication date.
+- Data freshness.
+- Access method.
+- Source URL.
+- Usage restrictions, where known.
+
+Use cached research responsibly to avoid unnecessary API calls.
+
+Allow the research system to distinguish:
+
+- Current information.
+- Historical information.
+- Emerging patterns.
+- Verified facts.
+- Interpretations.
+- Hypotheses.
+
+The generator must never describe historical data as live data.
+
+If live data integrations require API credentials, create secure configuration fields and explain exactly which integrations require external credentials. Do not expose credentials in frontend code.
+
+The generator must still be useful when optional research integrations are not configured. It can use accessible public research and clearly disclose data limitations.
+
+---
+
+# PART H — CONTENT GENERATION WORKFLOW
+
+The ideal workflow should be:
+
+1. The research engine discovers a relevant music-industry development, customer problem or market opportunity.
+2. The audience intelligence engine identifies which artist, musician or producer segment is affected.
+3. The buyer psychology engine identifies the relevant motivation, concern, objection or purchasing consideration.
+4. The 74 STUDIO business knowledge base identifies the relevant service or solution.
+5. The content strategy engine selects the most appropriate content angle.
+6. The AI generates one central content concept.
+7. The platform adaptation engine creates four different versions.
+8. The user reviews and edits each version.
+9. The user saves the content as a draft.
+10. The user copies or exports the content for publishing.
+
+Do not automatically publish generated content.
+
+The user must approve and publish the content manually.
+
+If a future integration with the 74-studio.com CMS is available, keep it optional and separate from the existing Behind The Release scheduler.
+
+---
+
+# PART I — DESIGN AND USER EXPERIENCE
+
+The application should feel like a professional social-media management and marketing intelligence platform.
+
+Maintain the existing design system wherever possible.
+
+The new Marketing Content Studio should have:
+
+- Clean navigation.
+- Responsive layout.
+- Consistent spacing.
+- Clear typography.
+- Professional dashboard cards.
+- Readable research panels.
+- Practical editing controls.
+- Clear loading states.
+- Error handling.
+- Empty states.
+- Confirmation messages.
+
+Do not introduce unnecessary complexity.
+
+Do not make the generator look like a generic chatbot.
+
+It should feel like a dedicated business content production tool.
+
+---
+
+# PART J — DATABASE AND BACKEND REQUIREMENTS
+
+Inspect the current Supabase schema before creating anything.
+
+Reuse existing structures where appropriate.
+
+Create only the additional tables and relationships required for:
+
+- Research sources.
+- Research findings.
+- Audience insights.
+- Content ideas.
+- Generated content concepts.
+- Platform-specific content versions.
+- Saved drafts.
+- Generation history.
+- Content performance feedback, if supported.
+
+Ensure appropriate user/workspace ownership and row-level security.
+
+Do not expose one workspace's private information to another.
+
+Keep the Marketing Content Studio separate from the Behind The Release social publishing data.
+
+Use secure server-side API calls.
+
+Validate inputs.
+
+Handle API failures gracefully.
+
+Avoid duplicate records and unnecessary database queries.
+
+---
+
+# PART K — FINAL ACCEPTANCE TESTS
+
+Do not consider the task complete until all of the following have been checked.
+
+### Workspace restructuring
+
+- Only Behind The Release remains as a social publishing workspace.
+- No 74 STUDIO social workspace appears in navigation.
+- No obsolete 74 STUDIO workspace selection remains.
+- Behind The Release YouTube accounts remain connected.
+- Behind The Release Instagram remains connected.
+- Existing scheduler features still work.
+
+### YouTube persistence
+
+- YouTube remains connected after page refresh.
+- YouTube remains connected after closing and reopening the browser.
+- Access-token refresh works.
+- Existing refresh tokens are not accidentally overwritten.
+- Publishing still works.
+
+### Instagram
+
+- The existing Unified Login implementation remains intact.
+- The connected Behind The Release account remains associated with the correct workspace.
+- Publishing permissions and account status can be checked.
+- No unnecessary Meta configuration changes are introduced.
+
+### Marketing Content Studio
+
+- Research sources can be displayed.
+- Content ideas can be generated.
+- Audience-specific content can be created.
+- Buyer objections and purchasing considerations can inform content.
+- One central message generates four distinct platform adaptations.
+- LinkedIn output is professionally structured.
+- X has an ultra-short version and expanded version.
+- Threads output is conversational.
+- Website articles have SEO metadata and proper structure.
+- Individual outputs can be edited and regenerated.
+- Drafts can be saved and retrieved.
+- Research sources are displayed accurately.
+- Unsupported factual claims are not fabricated.
+
+### Technical quality
+
+- TypeScript/build passes.
+- No broken imports.
+- No broken routes.
+- No unintended database migrations.
+- No exposed credentials.
+- No regressions in existing integrations.
+- No automatic publishing introduced.
+
+---
+
+# PART L — IMPLEMENTATION REPORT
+
+After implementation, provide a detailed report covering:
+
+1. Components and routes removed.
+2. Components and routes retained.
+3. Database changes.
+4. YouTube persistence issue identified.
+5. Exact technical fix implemented.
+6. OAuth refresh-token handling.
+7. Instagram integration verification.
+8. Marketing Content Studio features created.
+9. Research sources integrated.
+10. External API credentials still required.
+11. Tests performed and their actual results.
+12. Any incomplete work or remaining limitations.
+
+Do not claim that a feature works merely because its interface has been created.
+
+Distinguish between implemented, tested, mocked and not yet configured.
+
+**Final objective:** A stable, single-workspace Behind The Release social scheduler, with persistent YouTube and Instagram connections, plus an independent 74 STUDIO Marketing Content Studio that uses credible music-industry research and buyer intelligence to produce high-quality, platform-specific marketing content that attracts potential clients and encourages informed purchase decisions.

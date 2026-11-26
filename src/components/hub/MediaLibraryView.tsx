@@ -202,7 +202,7 @@ export const MediaLibraryView: React.FC = () => {
                                 ? 'instagram-reel'
                                 : 'instagram-carousel',
                             caption: '',
-                            hashtags: ['#74Studio'],
+                            hashtags: ['#BehindTheRelease'],
                             mediaAssetIds: [asset.id],
                           })
                         }

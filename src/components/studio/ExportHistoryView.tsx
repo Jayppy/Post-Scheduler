@@ -129,7 +129,7 @@ export const ExportHistoryView: React.FC = () => {
             : 'instagram-reel'
           : 'instagram-carousel',
       caption: `${record.projectName} — produced in ${activeWorkspace.name}.`,
-      hashtags: ['#74Studio'],
+      hashtags: ['#BehindTheRelease'],
       mediaAssetIds: savedAssets.map((a) => a.id),
       sourceProjectId: record.projectId,
     });

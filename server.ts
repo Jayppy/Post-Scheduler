@@ -2,10 +2,15 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
-import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import { registerSocialIntegrations } from './server/socialIntegrations';
 import { registerInstagramWebhook, WebhookRawBodyRequest } from './server/instagramWebhook';
 import { registerVideoTranscoder } from './server/videoTranscoder';
+import { registerMarketingIntelligence } from './server/marketingIntelligence';
+import { registerAiProviderRoutes } from './server/aiProviders/routes';
+import { registerSalesIntelligence } from './server/salesIntelligence';
+import { executeAiTask, getProvidersDashboardSnapshot } from './server/aiProviders/providerManager';
+import { ProviderExecutionError } from './server/aiProviders/types';
 
 function resolveServerPort(): number {
   const portArgIdx = process.argv.indexOf('--port');
@@ -39,6 +44,20 @@ function getAiClient(): GoogleGenAI | null {
 }
 
 function handleAiError(res: Response, err: unknown) {
+  if (err instanceof ProviderExecutionError) {
+    const isQuota =
+      err.errorClass === 'RATE_LIMITED' ||
+      err.errorClass === 'QUOTA_EXCEEDED' ||
+      err.errorClass === 'BUDGET_EXHAUSTED';
+    const isAuth = err.errorClass === 'AUTH_INVALID';
+    const status = err.statusCode || (isQuota ? 429 : isAuth ? 403 : 503);
+    return res.status(status).json({
+      error: err.message,
+      code: err.errorClass,
+      providerId: err.providerId,
+      quotaExceeded: isQuota,
+    });
+  }
   const message = err instanceof Error ? err.message : String(err);
   const lower = message.toLowerCase();
   const isQuota =
@@ -55,10 +74,10 @@ function handleAiError(res: Response, err: unknown) {
   const status = isQuota ? 429 : isAuth ? 403 : 500;
   return res.status(status).json({
     error: isQuota
-      ? 'Gemini free-tier quota or rate limit reached. You can continue creating and editing manually or retry shortly.'
+      ? 'AI free-tier quota or rate limit reached. You can continue creating and editing manually or retry shortly.'
       : isAuth
-        ? 'Gemini API key is missing or invalid in Settings > Secrets. Manual creation remains available.'
-        : `Gemini request failed: ${message}`,
+        ? 'AI API key is missing or invalid in Settings > Secrets. Manual creation remains available.'
+        : `AI request failed: ${message}`,
     code: isQuota ? 'QUOTA_EXCEEDED' : isAuth ? 'AUTH_ERROR' : 'AI_ERROR',
     quotaExceeded: isQuota,
   });
@@ -81,25 +100,27 @@ async function createApp() {
   registerSocialIntegrations(app);
   registerInstagramWebhook(app);
   registerVideoTranscoder(app);
+  registerMarketingIntelligence(app);
+  registerAiProviderRoutes(app);
+  registerSalesIntelligence(app);
 
   app.get('/api/health', (_req: Request, res: Response) => {
     const ai = getAiClient();
+    const snap = getProvidersDashboardSnapshot();
+    const providersConfigured = snap.providers.reduce<Record<string, boolean>>((acc, p) => {
+      acc[p.providerId] = p.configured;
+      return acc;
+    }, {});
     res.json({
       ok: true,
       geminiConfigured: Boolean(ai),
+      providersConfigured,
       timestamp: new Date().toISOString(),
     });
   });
 
   // 1. Content-First Carousel Structuring
   app.post('/api/ai/carousel-structure', async (req: Request, res: Response) => {
-    const ai = getAiClient();
-    if (!ai) {
-      return res.status(503).json({
-        error: 'Gemini API key is not configured in Settings > Secrets. Use manual slide structuring or configure a key.',
-        code: 'NO_API_KEY',
-      });
-    }
 
     const { content, slideCount, designInstructions, workspaceName, brandVoice } = req.body as {
       content: string;
@@ -115,9 +136,11 @@ async function createApp() {
 
     try {
       const targetSlides = Math.max(2, Math.min(15, Number(slideCount) || 5));
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Organize the following user-supplied content into exactly ${targetSlides} cohesive social carousel slides for "${workspaceName || '74 STUDIO'}".
+      const aiResp = await executeAiTask({
+        workspaceId: 'ws-behind-the-release',
+        taskType: 'carousel-structure',
+        responseFormat: 'json',
+        prompt: `Organize the following user-supplied content into exactly ${targetSlides} cohesive social carousel slides for "${workspaceName || 'Behind The Release'}".
 
 CRITICAL RULES:
 - Preserve the user's exact meaning, facts, and core arguments without inventing unrelated filler.
@@ -129,43 +152,52 @@ ${designInstructions ? `Design instructions to respect in pacing/tone: ${designI
 ${brandVoice ? `Brand voice guidance: ${brandVoice}` : ''}
 
 SOURCE CONTENT:
-${content}`,
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              projectTitle: { type: Type.STRING },
-              suggestedCaption: { type: Type.STRING },
-              hashtags: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-              slides: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    role: { type: Type.STRING, description: 'cover | body | breakdown | quote | cta' },
-                    kicker: { type: Type.STRING },
-                    headline: { type: Type.STRING },
-                    body: { type: Type.STRING },
-                    highlight: { type: Type.STRING },
-                    layoutVariant: { type: Type.STRING, description: 'hero-center | editorial-split | stat-focus | quote-card | minimal-list | cta-end' },
-                    visualNote: { type: Type.STRING },
+${content}
+
+Return JSON with keys: projectTitle, suggestedCaption, hashtags (string array), slides (array of { role, kicker, headline, body, highlight, layoutVariant, visualNote }).`,
+        geminiJsonSchema: {
+          type: Type.OBJECT,
+          properties: {
+            projectTitle: { type: Type.STRING },
+            suggestedCaption: { type: Type.STRING },
+            hashtags: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            slides: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  role: { type: Type.STRING, description: 'cover | body | breakdown | quote | cta' },
+                  kicker: { type: Type.STRING },
+                  headline: { type: Type.STRING },
+                  body: { type: Type.STRING },
+                  highlight: { type: Type.STRING },
+                  layoutVariant: {
+                    type: Type.STRING,
+                    description: 'hero-center | editorial-split | stat-focus | quote-card | minimal-list | cta-end',
                   },
-                  required: ['role', 'headline', 'body', 'layoutVariant'],
+                  visualNote: { type: Type.STRING },
                 },
+                required: ['role', 'headline', 'body', 'layoutVariant'],
               },
             },
-            required: ['projectTitle', 'slides'],
           },
+          required: ['projectTitle', 'slides'],
         },
       });
 
-      const parsed = JSON.parse((response.text || '{}').trim());
-      return res.json(parsed);
+      const cleaned = (aiResp.text || '{}').replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return res.json({
+        ...parsed,
+        providerMeta: {
+          providerId: aiResp.providerId,
+          model: aiResp.model,
+          wasFallback: aiResp.wasFallback,
+        },
+      });
     } catch (err) {
       return handleAiError(res, err);
     }
@@ -173,14 +205,6 @@ ${content}`,
 
   // 2. Topic-First Carousel Generation
   app.post('/api/ai/carousel-topic', async (req: Request, res: Response) => {
-    const ai = getAiClient();
-    if (!ai) {
-      return res.status(503).json({
-        error: 'Gemini API key is not configured in Settings > Secrets. Switch to manual entry to build slides offline.',
-        code: 'NO_API_KEY',
-      });
-    }
-
     const {
       topic,
       audience,
@@ -211,9 +235,11 @@ ${content}`,
 
     try {
       const targetSlides = Math.max(2, Math.min(15, Number(slideCount) || 5));
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Develop a complete, high-authority ${targetSlides}-slide Instagram carousel for brand "${workspaceName || '74 STUDIO'}".
+      const aiResp = await executeAiTask({
+        workspaceId: 'ws-behind-the-release',
+        taskType: 'carousel-structure',
+        responseFormat: 'json',
+        prompt: `Develop a complete, high-authority ${targetSlides}-slide Instagram carousel for brand "${workspaceName || 'Behind The Release'}".
 
 BRIEF:
 - Topic: ${topic}
@@ -229,43 +255,49 @@ QUALITY RULES:
 - Never generate vague filler just to pad slides. Every slide must deliver concrete insight, framework steps, or real-world music industry / creative studio examples.
 - Slide 1: High-impact hook cover slide.
 - Middle slides: Logical narrative progression with crisp headlines (<= 9 words) and focused body copy (20-38 words).
-- Final slide: Strong synthesis and the requested CTA.`,
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              projectTitle: { type: Type.STRING },
-              suggestedCaption: { type: Type.STRING },
-              hashtags: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-              slides: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    role: { type: Type.STRING },
-                    kicker: { type: Type.STRING },
-                    headline: { type: Type.STRING },
-                    body: { type: Type.STRING },
-                    highlight: { type: Type.STRING },
-                    layoutVariant: { type: Type.STRING },
-                    visualNote: { type: Type.STRING },
-                  },
-                  required: ['role', 'headline', 'body', 'layoutVariant'],
+- Final slide: Strong synthesis and the requested CTA.
+
+Return JSON with keys: projectTitle, suggestedCaption, hashtags (string array), slides (array of { role, kicker, headline, body, highlight, layoutVariant, visualNote }).`,
+        geminiJsonSchema: {
+          type: Type.OBJECT,
+          properties: {
+            projectTitle: { type: Type.STRING },
+            suggestedCaption: { type: Type.STRING },
+            hashtags: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            slides: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  role: { type: Type.STRING },
+                  kicker: { type: Type.STRING },
+                  headline: { type: Type.STRING },
+                  body: { type: Type.STRING },
+                  highlight: { type: Type.STRING },
+                  layoutVariant: { type: Type.STRING },
+                  visualNote: { type: Type.STRING },
                 },
+                required: ['role', 'headline', 'body', 'layoutVariant'],
               },
             },
-            required: ['projectTitle', 'slides'],
           },
+          required: ['projectTitle', 'slides'],
         },
       });
 
-      const parsed = JSON.parse((response.text || '{}').trim());
-      return res.json(parsed);
+      const cleaned = (aiResp.text || '{}').replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return res.json({
+        ...parsed,
+        providerMeta: {
+          providerId: aiResp.providerId,
+          model: aiResp.model,
+          wasFallback: aiResp.wasFallback,
+        },
+      });
     } catch (err) {
       return handleAiError(res, err);
     }
@@ -273,14 +305,6 @@ QUALITY RULES:
 
   // 3. Single Slide Design/Copy Regeneration
   app.post('/api/ai/carousel-slide-regen', async (req: Request, res: Response) => {
-    const ai = getAiClient();
-    if (!ai) {
-      return res.status(503).json({
-        error: 'Gemini API key is not configured. Edit the slide directly on the canvas.',
-        code: 'NO_API_KEY',
-      });
-    }
-
     const { slide, instruction, workspaceName, themeName } = req.body as {
       slide: { kicker?: string; headline: string; body: string; highlight?: string; layoutVariant?: string };
       instruction?: string;
@@ -289,9 +313,11 @@ QUALITY RULES:
     };
 
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Refine and elevate this single carousel slide for "${workspaceName || '74 STUDIO'}" using visual theme "${themeName || 'Dark Luxury'}".
+      const aiResp = await executeAiTask({
+        workspaceId: 'ws-behind-the-release',
+        taskType: 'creative-copy',
+        responseFormat: 'json',
+        prompt: `Refine and elevate this single carousel slide for "${workspaceName || 'Behind The Release'}" using visual theme "${themeName || 'Dark Luxury'}".
 Current slide:
 Kicker: ${slide.kicker || ''}
 Headline: ${slide.headline}
@@ -301,25 +327,22 @@ Current Layout Variant: ${slide.layoutVariant || 'editorial-split'}
 
 User instruction: ${instruction || 'Make the layout and copy sharper, punchier, and more scannable without losing the core point.'}
 
-Return a refreshed version choosing the best layoutVariant from: hero-center, editorial-split, stat-focus, quote-card, minimal-list, cta-end.`,
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              kicker: { type: Type.STRING },
-              headline: { type: Type.STRING },
-              body: { type: Type.STRING },
-              highlight: { type: Type.STRING },
-              layoutVariant: { type: Type.STRING },
-            },
-            required: ['headline', 'body', 'layoutVariant'],
+Return JSON { kicker, headline, body, highlight, layoutVariant } choosing layoutVariant from: hero-center, editorial-split, stat-focus, quote-card, minimal-list, cta-end.`,
+        geminiJsonSchema: {
+          type: Type.OBJECT,
+          properties: {
+            kicker: { type: Type.STRING },
+            headline: { type: Type.STRING },
+            body: { type: Type.STRING },
+            highlight: { type: Type.STRING },
+            layoutVariant: { type: Type.STRING },
           },
+          required: ['headline', 'body', 'layoutVariant'],
         },
       });
 
-      const parsed = JSON.parse((response.text || '{}').trim());
+      const cleaned = (aiResp.text || '{}').replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
       return res.json(parsed);
     } catch (err) {
       return handleAiError(res, err);
@@ -328,14 +351,6 @@ Return a refreshed version choosing the best layoutVariant from: hero-center, ed
 
   // 4. Reels & Shorts Script + Storyboard + Editing Intelligence Plan
   app.post('/api/ai/reels-plan', async (req: Request, res: Response) => {
-    const ai = getAiClient();
-    if (!ai) {
-      return res.status(503).json({
-        error: 'Gemini API key is not configured. You can build and approve scenes manually in the Storyboard.',
-        code: 'NO_API_KEY',
-      });
-    }
-
     const {
       topic,
       existingScript,
@@ -370,9 +385,11 @@ Return a refreshed version choosing the best layoutVariant from: hero-center, ed
               .join('\n')
           : 'No media files uploaded yet — design a typography-driven or placeholder-slot storyboard clearly labeled for user media assignment.';
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `You are an elite short-form video editor and creative director for "${workspaceName || '74 STUDIO'}".
+      const aiResp = await executeAiTask({
+        workspaceId: 'ws-behind-the-release',
+        taskType: 'reels-plan',
+        responseFormat: 'json',
+        prompt: `You are an elite short-form video editor and creative director for "${workspaceName || 'Behind The Release'}".
 Create a realistic, actionable editing plan and scene-by-scene storyboard for a vertical 9:16 video (Instagram Reels / YouTube Shorts).
 
 CONSTRAINTS (STRICT):
@@ -389,70 +406,67 @@ ${existingScript ? `- Existing Script:\n${existingScript}` : ''}
 ${transcript ? `- Transcript:\n${transcript}` : ''}
 
 UPLOADED ASSET MANIFEST:
-${assetManifest}`,
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              projectTitle: { type: Type.STRING },
-              hookLine: { type: Type.STRING },
-              fullScript: { type: Type.STRING },
-              musicDirection: { type: Type.STRING },
-              closingCta: { type: Type.STRING },
-              editingNotes: { type: Type.STRING },
-              suggestedCaption: { type: Type.STRING },
-              scenes: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    sceneNumber: { type: Type.INTEGER },
-                    recommendedAssetId: { type: Type.STRING },
-                    recommendedAssetName: { type: Type.STRING },
-                    durationSeconds: { type: Type.NUMBER },
-                    sceneDescription: { type: Type.STRING },
-                    textOverlay: { type: Type.STRING },
-                    lowerThird: { type: Type.STRING },
-                    subtitleLine: { type: Type.STRING },
-                    transitionStyle: { type: Type.STRING, description: 'cut | crossfade | slide-up | zoom-punch | flash-silver' },
-                    motionPreset: { type: Type.STRING, description: 'kinetic-pop | editorial-reveal | lower-third | minimal-fade | type-writer' },
-                    visualEmphasis: { type: Type.STRING },
+${assetManifest}
+
+Return JSON { projectTitle, hookLine, fullScript, musicDirection, closingCta, editingNotes, suggestedCaption, scenes: [{ sceneNumber, recommendedAssetId, recommendedAssetName, durationSeconds, sceneDescription, textOverlay, lowerThird, subtitleLine, transitionStyle, motionPreset, visualEmphasis }] }.`,
+        geminiJsonSchema: {
+          type: Type.OBJECT,
+          properties: {
+            projectTitle: { type: Type.STRING },
+            hookLine: { type: Type.STRING },
+            fullScript: { type: Type.STRING },
+            musicDirection: { type: Type.STRING },
+            closingCta: { type: Type.STRING },
+            editingNotes: { type: Type.STRING },
+            suggestedCaption: { type: Type.STRING },
+            scenes: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  sceneNumber: { type: Type.INTEGER },
+                  recommendedAssetId: { type: Type.STRING },
+                  recommendedAssetName: { type: Type.STRING },
+                  durationSeconds: { type: Type.NUMBER },
+                  sceneDescription: { type: Type.STRING },
+                  textOverlay: { type: Type.STRING },
+                  lowerThird: { type: Type.STRING },
+                  subtitleLine: { type: Type.STRING },
+                  transitionStyle: {
+                    type: Type.STRING,
+                    description: 'cut | crossfade | slide-up | zoom-punch | flash-silver',
                   },
-                  required: [
-                    'sceneNumber',
-                    'recommendedAssetId',
-                    'durationSeconds',
-                    'sceneDescription',
-                    'textOverlay',
-                    'transitionStyle',
-                  ],
+                  motionPreset: {
+                    type: Type.STRING,
+                    description: 'kinetic-pop | editorial-reveal | lower-third | minimal-fade | type-writer',
+                  },
+                  visualEmphasis: { type: Type.STRING },
                 },
+                required: [
+                  'sceneNumber',
+                  'recommendedAssetId',
+                  'durationSeconds',
+                  'sceneDescription',
+                  'textOverlay',
+                  'transitionStyle',
+                ],
               },
             },
-            required: ['projectTitle', 'hookLine', 'fullScript', 'closingCta', 'scenes'],
           },
+          required: ['projectTitle', 'hookLine', 'fullScript', 'closingCta', 'scenes'],
         },
       });
 
-      const parsed = JSON.parse((response.text || '{}').trim());
+      const cleaned = (aiResp.text || '{}').replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
       return res.json(parsed);
     } catch (err) {
       return handleAiError(res, err);
     }
   });
 
-  // 5. Gemini AI Content Assistant (Social Hub Copy, Hooks, Hashtags, Press Notes)
+  // 5. AI Content Assistant (Social Hub Copy, Hooks, Hashtags, Press Notes)
   app.post('/api/ai/social-copy', async (req: Request, res: Response) => {
-    const ai = getAiClient();
-    if (!ai) {
-      return res.status(503).json({
-        error: 'Gemini API key is not configured in Settings > Secrets.',
-        code: 'NO_API_KEY',
-      });
-    }
-
     const { prompt, format, platform, workspaceName, brandVoice } = req.body as {
       prompt: string;
       format: string;
@@ -466,40 +480,48 @@ ${assetManifest}`,
     }
 
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Draft ready-to-publish social media assets for "${workspaceName || '74 STUDIO'}".
+      const aiResp = await executeAiTask({
+        workspaceId: 'ws-behind-the-release',
+        taskType: 'creative-copy',
+        responseFormat: 'json',
+        prompt: `Draft ready-to-publish social media assets for "${workspaceName || 'Behind The Release'}".
 Platform: ${platform || 'Instagram'}
 Deliverable Format: ${format || 'Caption + Hooks'}
 Brand Voice: ${brandVoice || 'Confident, editorial, music-industry savvy'}
 
 Request:
-${prompt}`,
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              headline: { type: Type.STRING },
-              caption: { type: Type.STRING },
-              hooks: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-              hashtags: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-              cta: { type: Type.STRING },
+${prompt}
+
+Return JSON { headline, caption, hooks (string array), hashtags (string array), cta }.`,
+        geminiJsonSchema: {
+          type: Type.OBJECT,
+          properties: {
+            headline: { type: Type.STRING },
+            caption: { type: Type.STRING },
+            hooks: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
             },
-            required: ['headline', 'caption', 'hooks', 'hashtags'],
+            hashtags: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            cta: { type: Type.STRING },
           },
+          required: ['headline', 'caption', 'hooks', 'hashtags'],
         },
       });
 
-      const parsed = JSON.parse((response.text || '{}').trim());
-      return res.json(parsed);
+      const cleaned = (aiResp.text || '{}').replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+      return res.json({
+        ...parsed,
+        providerMeta: {
+          providerId: aiResp.providerId,
+          model: aiResp.model,
+          wasFallback: aiResp.wasFallback,
+        },
+      });
     } catch (err) {
       return handleAiError(res, err);
     }
