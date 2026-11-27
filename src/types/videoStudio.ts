@@ -147,7 +147,7 @@ export interface VideoRenderRecord {
   projectId: string;
   status: 'idle' | 'rendering' | 'completed' | 'failed' | 'cancelled';
   format: 'mp4' | 'webm';
-  resolution: '1080x1920' | '540x960';
+  resolution: '1080x1920' | '540x960' | '1920x1080';
   fps: number;
   durationSeconds: number;
   engine: 'remotion-web' | 'canvas-ffmpeg-fallback';

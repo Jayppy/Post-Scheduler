@@ -8,9 +8,11 @@ import {
 import {
   SUPABASE_BUCKETS,
   ensureSupabaseStorageBuckets,
+  getSafeStorageOwnerPrefix,
   getSupabaseAdmin,
   getSupabaseConfigDiagnostics,
 } from './client';
+import { isValidEncryptedPayload } from '../tokenCrypto';
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const MIGRATION_STATUS_FILE = 'supabase-migration-status.json';
@@ -231,23 +233,78 @@ export async function runIdempotentLegacyMigration(opts: {
   }>(path.join(DATA_DIR, 'integrations-vault.json'));
 
   if (vault?.connections) {
-    const connRows = Object.entries(vault.connections).map(([key, c]) => ({
-      id: key,
-      owner_uid: opts.ownerUid,
-      workspace_id: String(c.workspaceId || 'ws-behind-the-release'),
-      platform: String(c.platform || 'instagram'),
-      account_id: String(c.accountId || ''),
-      account_name: String(c.accountName || ''),
-      account_handle: c.accountHandle ? String(c.accountHandle) : null,
-      encrypted_access_token_json: c.encryptedAccessToken || {},
-      encrypted_refresh_token_json: c.encryptedRefreshToken || null,
-      token_type: c.tokenType ? String(c.tokenType) : null,
-      expires_at: typeof c.expiresAt === 'number' ? c.expiresAt : null,
-      last_error: c.lastError ? String(c.lastError) : null,
-      connected_at: String(c.connectedAt || nowIso),
-      updated_at: String(c.updatedAt || nowIso),
-    }));
-    report.counts.oauthConnections = await upsert('oauth_connections', connRows, 'owner_uid,id');
+    const { data: existingSupabaseConns, error: existingFetchErr } = await client
+      .from('oauth_connections')
+      .select('id,workspace_id,platform,encrypted_access_token_json,encrypted_refresh_token_json,updated_at')
+      .eq('owner_uid', opts.ownerUid);
+
+    if (existingFetchErr) {
+      report.warnings.push(`oauth_connections lookup failed: ${existingFetchErr.message}`);
+    }
+
+    const existingByScope = new Map<string, Record<string, unknown>>();
+    if (Array.isArray(existingSupabaseConns)) {
+      for (const row of existingSupabaseConns) {
+        const scope = `${String(row.workspace_id || '')}:${String(row.platform || '')}`;
+        existingByScope.set(scope, row as Record<string, unknown>);
+      }
+    }
+
+    const connRows: Array<Record<string, unknown>> = [];
+    for (const [key, c] of Object.entries(vault.connections)) {
+      const workspaceId = String(c.workspaceId || 'ws-behind-the-release');
+      const platform = String(c.platform || 'instagram');
+      if (platform !== 'instagram' && platform !== 'youtube') {
+        report.warnings.push(`oauth_connections: skipped unsupported platform "${platform}" for ${key}`);
+        continue;
+      }
+      if (!isValidEncryptedPayload(c.encryptedAccessToken)) {
+        report.warnings.push(`oauth_connections: skipped ${key} due to missing or invalid encrypted access token.`);
+        continue;
+      }
+
+      const existingRow = existingByScope.get(`${workspaceId}:${platform}`);
+      const existingHasValidAccess = existingRow && isValidEncryptedPayload(existingRow.encrypted_access_token_json);
+      const existingUpdatedMs = existingRow?.updated_at ? Date.parse(String(existingRow.updated_at)) : 0;
+      const localUpdatedMs = c.updatedAt ? Date.parse(String(c.updatedAt)) : 0;
+
+      // Never overwrite a valid newer Supabase connection with older local vault data
+      if (existingHasValidAccess && existingUpdatedMs > 0 && localUpdatedMs > 0 && existingUpdatedMs > localUpdatedMs) {
+        continue;
+      }
+
+      const incomingRefresh = isValidEncryptedPayload(c.encryptedRefreshToken)
+        ? c.encryptedRefreshToken
+        : null;
+      const preservedRefresh =
+        incomingRefresh ||
+        (existingRow && isValidEncryptedPayload(existingRow.encrypted_refresh_token_json)
+          ? existingRow.encrypted_refresh_token_json
+          : null);
+
+      connRows.push({
+        id: existingRow?.id ? String(existingRow.id) : key,
+        owner_uid: opts.ownerUid,
+        workspace_id: workspaceId,
+        platform,
+        account_id: String(c.accountId || ''),
+        account_name: String(c.accountName || ''),
+        account_handle: c.accountHandle ? String(c.accountHandle) : null,
+        encrypted_access_token_json: c.encryptedAccessToken,
+        encrypted_refresh_token_json: preservedRefresh,
+        token_type: c.tokenType ? String(c.tokenType) : null,
+        expires_at: typeof c.expiresAt === 'number' ? c.expiresAt : null,
+        last_error: c.lastError ? String(c.lastError) : null,
+        connected_at: String(c.connectedAt || nowIso),
+        updated_at: String(c.updatedAt || nowIso),
+      });
+    }
+
+    report.counts.oauthConnections = await upsert(
+      'oauth_connections',
+      connRows,
+      'owner_uid,workspace_id,platform'
+    );
   }
 
   if (vault?.scheduledJobs) {
@@ -637,12 +694,35 @@ export function registerSupabaseSystemRoutes(app: Express): void {
         const expectedTables = [
           'workspaces',
           'oauth_connections',
+          'oauth_states',
           'scheduled_jobs',
+          'publish_history',
+          'publish_idempotency',
+          'creative_projects',
+          'media_assets',
+          'marketing_knowledge_bases',
+          'marketing_research_sources',
           'marketing_drafts',
+          'ai_provider_profiles',
+          'ai_usage_logs',
+          'sales_knowledge_bases',
           'sales_conversations',
+          'sales_messages',
+          'sales_legacy_leads',
+          'sales_legacy_outputs',
+          'sales_legacy_activities',
           'video_projects',
+          'video_scripts',
           'video_scenes',
+          'video_assets',
           'video_renders',
+          'video_upload_sessions',
+          'video_templates',
+          'video_provider_usage',
+          'social_posts',
+          'campaigns',
+          'design_themes',
+          'editing_presets',
         ];
         for (const tbl of expectedTables) {
           const { error } = await client.from(tbl).select('id').limit(1);
@@ -731,7 +811,7 @@ export function registerSupabaseSystemRoutes(app: Express): void {
 
     const ownerUid = req.operatorContext?.ownerScopeKey || 'local-operator';
     const probeId = `__audit_probe_${Date.now()}`;
-    const probePath = `${ownerUid}/${probeId}.txt`;
+    const probePath = `${getSafeStorageOwnerPrefix(ownerUid)}/${probeId}.txt`;
     const dbCheck = { insert: false, read: false, update: false, delete: false, error: '' };
     const storageCheck = { upload: false, download: false, delete: false, error: '' };
 

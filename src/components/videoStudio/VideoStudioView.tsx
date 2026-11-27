@@ -52,6 +52,9 @@ import { BehindTheReleaseVideoComposition } from './RemotionComposition';
 import {
   computeProjectDurationFrames,
   renderVideoProjectToFile,
+  transcodeToVerifiedMp4,
+  type RawRenderBackup,
+  type VideoExportResolution,
 } from './videoRenderer';
 
 const WORKFLOW_STAGES: Array<{ id: VideoWorkflowStage; label: string }> = [
@@ -140,7 +143,7 @@ export const VideoStudioView: React.FC = () => {
   const [regenLoading, setRegenLoading] = useState(false);
 
   // Render & Export state
-  const [exportResolution, setExportResolution] = useState<'1080x1920' | '540x960'>('1080x1920');
+  const [exportResolution, setExportResolution] = useState<VideoExportResolution>('1080x1920');
   const [rendering, setRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatusLabel, setRenderStatusLabel] = useState('');
@@ -149,7 +152,12 @@ export const VideoStudioView: React.FC = () => {
     format: 'mp4' | 'webm';
     durationSeconds: number;
     renderId?: string;
+    engine?: 'remotion-web' | 'canvas-ffmpeg-fallback';
   } | null>(null);
+  const [pendingRawRender, setPendingRawRender] = useState<
+    (RawRenderBackup & { blobKey: string; resolution: VideoExportResolution }) | null
+  >(null);
+  const [mp4ConversionError, setMp4ConversionError] = useState<string | null>(null);
   const [cloudUploadError, setCloudUploadError] = useState<string | null>(null);
   const [cloudBackupSaved, setCloudBackupSaved] = useState(false);
   const [uploadingCloud, setUploadingCloud] = useState(false);
@@ -381,6 +389,89 @@ export const VideoStudioView: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
+  const finalizeVerifiedMp4Export = async (opts: {
+    mp4Blob: Blob;
+    durationSeconds: number;
+    engine: 'remotion-web' | 'canvas-ffmpeg-fallback';
+    resolution: VideoExportResolution;
+    signal?: AbortSignal;
+  }) => {
+    if (!activeProject) return;
+    const renderId = `rnd_${Date.now().toString(36)}`;
+
+    // Save locally into IndexedDB first as durable fallback
+    const localBlobKey = createId('video_blob');
+    await putMediaBlob(localBlobKey, opts.mp4Blob).catch(() => {});
+
+    setLastRenderedBlob({
+      blob: opts.mp4Blob,
+      format: 'mp4',
+      durationSeconds: opts.durationSeconds,
+      renderId,
+      engine: opts.engine,
+    });
+    setPendingRawRender(null);
+    setMp4ConversionError(null);
+
+    const renderRecord: VideoRenderRecord = {
+      id: renderId,
+      projectId: activeProject.id,
+      status: 'completed',
+      format: 'mp4',
+      resolution: opts.resolution,
+      fps: 30,
+      durationSeconds: opts.durationSeconds,
+      engine: opts.engine,
+      progress: 100,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Attempt chunked cloud upload
+    let storagePath: string | undefined;
+    let storageBucket: string | undefined;
+    let uploadErrMessage: string | null = null;
+    try {
+      setUploadingCloud(true);
+      const uploadRes = await videoStudioClient.uploadRenderedVideoWithProgress(
+        activeProject.id,
+        renderId,
+        opts.mp4Blob,
+        'video/mp4',
+        (pct, label) => {
+          setRenderProgress(pct);
+          setRenderStatusLabel(label);
+        },
+        opts.signal
+      );
+      storagePath = uploadRes.storagePath;
+      storageBucket = uploadRes.storageBucket;
+      setCloudBackupSaved(true);
+    } catch (uploadErr) {
+      uploadErrMessage = uploadErr instanceof Error ? uploadErr.message : 'Cloud backup failed';
+      setCloudUploadError(uploadErrMessage);
+      console.warn('Cloud video backup warning (saved locally):', uploadErrMessage);
+    } finally {
+      setUploadingCloud(false);
+    }
+
+    if (storagePath) {
+      renderRecord.storagePath = storagePath;
+      renderRecord.storageBucket = storageBucket;
+    }
+
+    const saved = await videoStudioClient.saveRenderCheckpoint(activeProject.id, {
+      render: renderRecord,
+    });
+    setProjects((prev) => prev.map((p) => (p.id === saved.project.id ? saved.project : p)));
+    notify(
+      storagePath ? 'success' : 'info',
+      storagePath ? 'Verified MP4 Rendered & Backed Up' : 'Verified MP4 Rendered Locally',
+      storagePath
+        ? `${opts.resolution} MP4 (${opts.durationSeconds}s) successfully backed up to Supabase storage.`
+        : `${opts.resolution} MP4 (${opts.durationSeconds}s) saved locally. Cloud backup skipped/failed (${uploadErrMessage || 'Offline/Bucket limit'}).`
+    );
+  };
+
   const handleRenderExport = async () => {
     if (!activeProject || !activeProject.approvedForRender || rendering) return;
     setRendering(true);
@@ -388,95 +479,84 @@ export const VideoStudioView: React.FC = () => {
     setRenderStatusLabel('Initializing render…');
     setCloudUploadError(null);
     setCloudBackupSaved(false);
+    setMp4ConversionError(null);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    let localBlobKey = '';
     try {
       const result = await renderVideoProjectToFile({
         project: activeProject,
         resolution: exportResolution,
         fps: 30,
         signal: controller.signal,
+        onRawRenderBackup: async (raw) => {
+          const rawKey = createId('raw_render');
+          await putMediaBlob(rawKey, raw.blob).catch(() => {});
+          setPendingRawRender({
+            ...raw,
+            blobKey: rawKey,
+            resolution: exportResolution,
+          });
+        },
         onProgress: (pct, label) => {
           setRenderProgress(pct);
           setRenderStatusLabel(label);
         },
       });
 
-      const renderId = `rnd_${Date.now().toString(36)}`;
-
-      // Save locally into IndexedDB first as durable fallback
-      localBlobKey = createId('video_blob');
-      await putMediaBlob(localBlobKey, result.blob).catch(() => {});
-
-      setLastRenderedBlob({
-        blob: result.blob,
-        format: result.format,
-        durationSeconds: result.durationSeconds,
-        renderId,
-      });
-
-      const renderRecord: VideoRenderRecord = {
-        id: renderId,
-        projectId: activeProject.id,
-        status: 'completed',
-        format: result.format,
-        resolution: exportResolution,
-        fps: 30,
+      await finalizeVerifiedMp4Export({
+        mp4Blob: result.blob,
         durationSeconds: result.durationSeconds,
         engine: result.engine,
-        progress: 100,
-        createdAt: new Date().toISOString(),
-      };
-
-      // Attempt chunked cloud upload
-      let storagePath: string | undefined;
-      let storageBucket: string | undefined;
-      try {
-        setUploadingCloud(true);
-        const uploadRes = await videoStudioClient.uploadRenderedVideoWithProgress(
-          activeProject.id,
-          renderId,
-          result.blob,
-          result.mimeType,
-          (pct, label) => {
-            setRenderProgress(pct);
-            setRenderStatusLabel(label);
-          },
-          controller.signal
-        );
-        storagePath = uploadRes.storagePath;
-        storageBucket = uploadRes.storageBucket;
-        setCloudBackupSaved(true);
-      } catch (uploadErr) {
-        const errStr = uploadErr instanceof Error ? uploadErr.message : 'Cloud backup failed';
-        setCloudUploadError(errStr);
-        console.warn('Cloud video backup warning (saved locally):', errStr);
-      } finally {
-        setUploadingCloud(false);
-      }
-
-      if (storagePath) {
-        renderRecord.storagePath = storagePath;
-        renderRecord.storageBucket = storageBucket;
-      }
-
-      const saved = await videoStudioClient.saveRenderCheckpoint(activeProject.id, {
-        render: renderRecord,
+        resolution: exportResolution,
+        signal: controller.signal,
       });
-      setProjects((prev) => prev.map((p) => (p.id === saved.project.id ? saved.project : p)));
-      notify(
-        storagePath ? 'success' : 'info',
-        storagePath ? 'Video Rendered & Backed Up' : 'Video Rendered Locally',
-        storagePath
-          ? `${exportResolution} ${result.format.toUpperCase()} (${result.durationSeconds}s) successfully backed up to Supabase storage.`
-          : `${exportResolution} ${result.format.toUpperCase()} (${result.durationSeconds}s) saved locally. Cloud backup skipped/failed (${cloudUploadError || 'Offline/Bucket limit'}).`
-      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Render interrupted';
-      notify(controller.signal.aborted ? 'info' : 'error', controller.signal.aborted ? 'Render cancelled' : 'Render failed', msg);
+      if (!controller.signal.aborted && msg.toLowerCase().includes('mp4')) {
+        setMp4ConversionError(msg);
+      }
+      notify(controller.signal.aborted ? 'info' : 'error', controller.signal.aborted ? 'Render cancelled' : 'Render / MP4 conversion failed', msg);
+    } finally {
+      setRendering(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleRetryMp4Conversion = async () => {
+    if (!activeProject || !pendingRawRender || rendering) return;
+    setRendering(true);
+    setRenderProgress(88);
+    setRenderStatusLabel('Retrying H.264/AAC MP4 conversion from preserved render…');
+    setMp4ConversionError(null);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    try {
+      const mp4Blob = await transcodeToVerifiedMp4({
+        rawBlob: pendingRawRender.blob,
+        width: pendingRawRender.width,
+        height: pendingRawRender.height,
+        fps: pendingRawRender.fps,
+        durationSeconds: pendingRawRender.durationSeconds,
+        signal: controller.signal,
+        onProgress: (pct, label) => {
+          setRenderProgress(pct);
+          setRenderStatusLabel(label);
+        },
+      });
+      await finalizeVerifiedMp4Export({
+        mp4Blob,
+        durationSeconds: pendingRawRender.durationSeconds,
+        engine: 'canvas-ffmpeg-fallback',
+        resolution: pendingRawRender.resolution,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'MP4 retry failed';
+      setMp4ConversionError(msg);
+      notify('error', 'MP4 Conversion Failed', msg);
     } finally {
       setRendering(false);
       abortControllerRef.current = null;
@@ -1702,10 +1782,10 @@ export const VideoStudioView: React.FC = () => {
           <div className="lg:col-span-7 rounded-xl border border-zinc-800 bg-[#121216] p-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-base font-semibold text-zinc-100">
-                Render MP4 / WebM Video Export
+                Render Verified H.264 MP4 Export
               </h3>
               <span className="text-[11px] font-mono text-zinc-400">
-                Remotion Free License
+                FFmpeg H.264 + AAC · +faststart
               </span>
             </div>
 
@@ -1728,12 +1808,13 @@ export const VideoStudioView: React.FC = () => {
                     <select
                       value={exportResolution}
                       onChange={(e) =>
-                        setExportResolution(e.target.value as '1080x1920' | '540x960')
+                        setExportResolution(e.target.value as VideoExportResolution)
                       }
                       className="w-full px-3 py-2 rounded-lg bg-[#09090b] border border-zinc-800 text-xs text-zinc-100"
                     >
-                      <option value="1080x1920">1080×1920 Full HD (Final Release)</option>
-                      <option value="540x960">540×960 Fast Draft Preview</option>
+                      <option value="1080x1920">1080×1920 Vertical 9:16 (Reels / Shorts)</option>
+                      <option value="1920x1080">1920×1080 Landscape 16:9 (YouTube / Studio)</option>
+                      <option value="540x960">540×960 Fast Draft Preview (MP4)</option>
                     </select>
                   </div>
                   <div className="flex items-end gap-2">
@@ -1773,6 +1854,27 @@ export const VideoStudioView: React.FC = () => {
                         className="h-full bg-amber-400 transition-all"
                         style={{ width: `${renderProgress}%` }}
                       />
+                    </div>
+                  </div>
+                )}
+
+                {mp4ConversionError && pendingRawRender && (
+                  <div className="p-4 rounded-xl border border-red-500/40 bg-red-500/10 space-y-2.5 text-xs text-red-200">
+                    <div className="font-semibold text-red-100">
+                      MP4 Conversion Failed — Original Render Preserved
+                    </div>
+                    <p className="text-[11px] text-red-200/90 leading-relaxed">
+                      {mp4ConversionError}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={rendering}
+                        onClick={handleRetryMp4Conversion}
+                        className="px-3 py-1.5 rounded-md bg-red-500 text-zinc-950 font-semibold hover:bg-red-400 disabled:opacity-50"
+                      >
+                        Retry MP4 Conversion
+                      </button>
                     </div>
                   </div>
                 )}

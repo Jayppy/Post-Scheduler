@@ -1,14 +1,12 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
 import {
   EditingPreset,
-  ReelAssetRef,
   ReelState,
   SubtitleSegment,
   TimelineClip,
   Workspace,
 } from '../types/studio';
 import { getMediaBlob } from './idb';
+import { getOperatorAuthHeaders } from './authHeaders';
 
 export interface ReelValidationResult {
   valid: boolean;
@@ -226,29 +224,6 @@ export function validateSocialMp4Bytes(bytes: Uint8Array): {
   }
 
   return { valid: true, faststart: true };
-}
-
-let cachedFfmpeg: FFmpeg | null = null;
-
-async function getLoadedFfmpeg(onLog?: (msg: string) => void): Promise<FFmpeg | null> {
-  try {
-    if (cachedFfmpeg && cachedFfmpeg.loaded) {
-      return cachedFfmpeg;
-    }
-    const ffmpeg = new FFmpeg();
-    if (onLog) {
-      ffmpeg.on('log', ({ message }) => onLog(message));
-    }
-    await ffmpeg.load({
-      coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js',
-      wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm',
-    });
-    cachedFfmpeg = ffmpeg;
-    return ffmpeg;
-  } catch (err) {
-    console.warn('Browser FFmpeg.wasm fallback unavailable:', err);
-    return null;
-  }
 }
 
 export function drawReelFrame(
@@ -728,94 +703,36 @@ export async function renderReelVideo({
 
     onProgress?.('Encoding social-ready H.264/AAC MP4 (+faststart)...', 76);
 
-    try {
-      const transcodeUrl = `/api/video/transcode-mp4?width=${encodeURIComponent(
-        String(width)
-      )}&height=${encodeURIComponent(String(height))}&fps=${encodeURIComponent(
-        String(fps)
-      )}&duration=${encodeURIComponent(totalDuration.toFixed(3))}`;
+    const transcodeUrl = `/api/video/transcode-mp4?width=${encodeURIComponent(
+      String(width)
+    )}&height=${encodeURIComponent(String(height))}&fps=${encodeURIComponent(
+      String(fps)
+    )}&duration=${encodeURIComponent(totalDuration.toFixed(3))}`;
 
-      const res = await fetch(transcodeUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': rawBlob.type || 'application/octet-stream' },
-        body: rawBlob,
-        signal: abortSignal,
-      });
+    const authHeaders = await getOperatorAuthHeaders({
+      'Content-Type': rawBlob.type || 'application/octet-stream',
+    });
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(errJson.error || `Server transcoder error (${res.status})`);
-      }
+    const res = await fetch(transcodeUrl, {
+      method: 'POST',
+      headers: authHeaders,
+      body: rawBlob,
+      signal: abortSignal,
+    });
 
-      const buf = await res.arrayBuffer();
-      finalMp4Bytes = new Uint8Array(buf);
-      engineUsed = 'ffmpeg-server';
-      serverFaststart = res.headers.get('X-Faststart-Verified') === 'true';
-      videoCodec = res.headers.get('X-Video-Codec') || 'h264';
-      audioCodec = res.headers.get('X-Audio-Codec') || 'aac';
-    } catch (serverErr) {
-      if (abortSignal?.aborted) throw serverErr;
-      onProgress?.('Server transcoder unavailable, encoding H.264/AAC via FFmpeg.wasm...', 82);
-      const ffmpeg = await getLoadedFfmpeg();
-      if (!ffmpeg) {
-        throw new Error(
-          `Social-ready MP4 encoding failed (${
-            serverErr instanceof Error ? serverErr.message : 'server unavailable'
-          }) and browser FFmpeg.wasm fallback could not load. Export halted so an incompatible file is not saved.`
-        );
-      }
-
-      try {
-        await ffmpeg.writeFile('input.bin', await fetchFile(rawBlob));
-        await ffmpeg.exec([
-          '-i',
-          'input.bin',
-          '-t',
-          totalDuration.toFixed(3),
-          '-vf',
-          `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p`,
-          '-c:v',
-          'libx264',
-          '-profile:v',
-          'high',
-          '-level',
-          '4.0',
-          '-pix_fmt',
-          'yuv420p',
-          '-r',
-          String(fps),
-          '-vsync',
-          'cfr',
-          '-preset',
-          'ultrafast',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          '-ar',
-          '44100',
-          '-ac',
-          '2',
-          '-movflags',
-          '+faststart',
-          'output.mp4',
-        ]);
-        const mp4Data = await ffmpeg.readFile('output.mp4');
-        finalMp4Bytes =
-          mp4Data instanceof Uint8Array
-            ? new Uint8Array(mp4Data)
-            : new TextEncoder().encode(String(mp4Data));
-        engineUsed = 'ffmpeg-wasm';
-        await ffmpeg.deleteFile('input.bin').catch(() => {});
-        await ffmpeg.deleteFile('output.mp4').catch(() => {});
-      } catch (wasmErr) {
-        throw new Error(
-          `MP4 encoding failed cleanly (${
-            wasmErr instanceof Error ? wasmErr.message : String(wasmErr)
-          }). No invalid WebM or broken MP4 file was created.`
-        );
-      }
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(
+        `Social-ready MP4 encoding failed (${errJson.error || `HTTP ${res.status}`}). Export halted so an incompatible file is not saved.`
+      );
     }
+
+    const buf = await res.arrayBuffer();
+    finalMp4Bytes = new Uint8Array(buf);
+    engineUsed = 'ffmpeg-server';
+    serverFaststart = res.headers.get('X-Faststart-Verified') === 'true';
+    videoCodec = res.headers.get('X-Video-Codec') || 'h264';
+    audioCodec = res.headers.get('X-Audio-Codec') || 'aac';
 
     onProgress?.('Verifying MP4 container atoms (ftyp/moov/avc1/mp4a)...', 94);
     const atomCheck = validateSocialMp4Bytes(finalMp4Bytes);

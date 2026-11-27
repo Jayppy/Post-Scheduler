@@ -98,6 +98,45 @@ async function createApp() {
   app.set('trust proxy', 1);
   const httpServer = http.createServer(app);
 
+  let isShuttingDown = false;
+  let activeRequests = 0;
+  const activeSockets = new Set<import('net').Socket>();
+
+  httpServer.on('connection', (socket) => {
+    activeSockets.add(socket);
+    socket.once('close', () => activeSockets.delete(socket));
+  });
+
+  // Track in-flight requests and reject incoming traffic when shutting down
+  app.use((req, res, next) => {
+    if (isShuttingDown) {
+      res.setHeader('Connection', 'close');
+      if (req.path === '/api/health') {
+        return res.status(503).json({
+          ok: false,
+          shuttingDown: true,
+          message: 'Server is draining in-flight requests for shutdown.',
+        });
+      }
+      return res.status(503).json({
+        error: 'Server is shutting down. Please retry shortly.',
+        code: 'SERVER_SHUTTING_DOWN',
+      });
+    }
+
+    activeRequests += 1;
+    let finished = false;
+    const onFinish = () => {
+      if (!finished) {
+        finished = true;
+        activeRequests = Math.max(0, activeRequests - 1);
+      }
+    };
+    res.on('finish', onFinish);
+    res.on('close', onFinish);
+    next();
+  });
+
   const largeUploadJson = express.json({ limit: '80mb' });
   const transcribeJson = express.json({ limit: '16mb' });
   const standardJson = express.json({
@@ -663,6 +702,61 @@ Return JSON { headline, caption, hooks (string array), hashtags (string array), 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`74 STUDIO SOCIAL HUB server listening on http://0.0.0.0:${PORT}`);
   });
+
+  const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 15_000;
+
+  async function handleShutdown(signal: string) {
+    if (isShuttingDown) {
+      return;
+    }
+    isShuttingDown = true;
+    console.log(`Received ${signal}. Initiating graceful shutdown (drain timeout: ${SHUTDOWN_TIMEOUT_MS}ms)...`);
+
+    // Safety timeout prevents indefinite hanging
+    const forceTimer = setTimeout(() => {
+      console.warn(`Forcefully terminating after ${SHUTDOWN_TIMEOUT_MS}ms timeout (${activeRequests} active requests remaining).`);
+      for (const socket of activeSockets) {
+        socket.destroy();
+      }
+      process.exit(0);
+    }, SHUTDOWN_TIMEOUT_MS);
+    forceTimer.unref();
+
+    // Stop accepting new incoming HTTP connections
+    httpServer.close((err) => {
+      if (err) {
+        console.error('Error during HTTP server close:', err);
+      } else {
+        console.log('HTTP server closed to new connections.');
+      }
+    });
+
+    // Close idle keep-alive sockets immediately
+    if (typeof (httpServer as any).closeIdleConnections === 'function') {
+      (httpServer as any).closeIdleConnections();
+    }
+
+    // Await active requests to drain
+    const pollInterval = 100;
+    let elapsed = 0;
+    while (activeRequests > 0 && elapsed < SHUTDOWN_TIMEOUT_MS - 1000) {
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      elapsed += pollInterval;
+    }
+
+    if (activeRequests > 0) {
+      console.warn(`Drain period completed with ${activeRequests} requests still in flight.`);
+    } else {
+      console.log('All in-flight requests drained cleanly.');
+    }
+
+    clearTimeout(forceTimer);
+    console.log('Graceful shutdown completed successfully.');
+    process.exit(0);
+  }
+
+  process.once('SIGTERM', () => void handleShutdown('SIGTERM'));
+  process.once('SIGINT', () => void handleShutdown('SIGINT'));
 }
 
 createApp().catch((err) => {

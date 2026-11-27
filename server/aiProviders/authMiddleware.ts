@@ -153,7 +153,7 @@ export function requireServerOperator(allowedWorkspace?: BusinessWorkspaceId) {
         req.operatorContext = {
           authenticated: true,
           authSource: 'firebase-bearer',
-          ownerScopeKey: verified.uid.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128),
+          ownerScopeKey: verified.uid,
           email: verified.email,
         };
       } catch (err) {
